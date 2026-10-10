@@ -7,7 +7,7 @@ import path from "path";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import cookieParser from "cookie-parser";
-import { initTelegramBot, botStatus } from "./src/lib/telegram.js";
+import { initTelegramBot, botStatus } from "./src/lib/telegram";
 
 const JWT_SECRET = process.env.JWT_SECRET || 'aurel_super_secret_key_123';
 
@@ -20,6 +20,7 @@ app.get('/ping', (req, res) => res.status(200).send('OK'));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cookieParser());
+
 
 // Initialize LibSQL Database
 let dbUrl = process.env.TURSO_DATABASE_URL || process.env.TURSO_URL || "https://jurnal-tryout-lancarkoreaa.aws-ap-northeast-1.turso.io";
@@ -757,6 +758,12 @@ app.delete("/api/trades/:id", authMiddleware, async (req: any, res) => {
 // Add catchall for /api 404 to guarantee JSON
 app.use("/api", (req, res) => {
   res.status(404).json({ error: `API Route Not Found: ${req.method} ${req.url}` });
+});
+
+// Global error handler
+app.use((err: any, req: any, res: any, next: any) => {
+  console.error("Unhandled API error:", err);
+  res.status(err.status || 500).json({ error: err?.message || "Internal Server Error" });
 });
 
 

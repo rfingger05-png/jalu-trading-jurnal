@@ -24,6 +24,7 @@ export default function Auth({ onLogin }: { onLogin: (user: User) => void }) {
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
         body: JSON.stringify(body),
       });
 
@@ -31,7 +32,7 @@ export default function Auth({ onLogin }: { onLogin: (user: User) => void }) {
       try {
         data = await res.json();
       } catch (e) {
-        throw new Error('Server returned an unexpected response. Please try again.');
+        throw new Error(`Server returned status ${res.status} (${res.statusText || 'Non-JSON response'}). Mohon refresh atau coba sesaat lagi.`);
       }
 
       if (!res.ok) throw new Error(data?.error || 'Authentication failed');
