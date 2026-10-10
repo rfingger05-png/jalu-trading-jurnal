@@ -229,8 +229,12 @@ export function initTelegramBot(db: any) {
       console.warn('⚠️ Could not set Telegram commands:', cmdErr?.message || cmdErr);
     });
 
-    // Start Long Polling safely
+    // Start Long Polling safely (disabled on Vercel Serverless which uses Webhooks)
     const launchPolling = () => {
+      if (process.env.VERCEL) {
+        console.log('⚡ Running in Vercel Serverless: Polling disabled, Webhook mode active');
+        return;
+      }
       bot.telegram.deleteWebhook({ drop_pending_updates: false })
         .catch(() => {})
         .finally(() => {
