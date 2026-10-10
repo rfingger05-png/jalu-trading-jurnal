@@ -44,18 +44,71 @@ app.get('/api/telegram/status', (req, res) => {
   res.json(botStatus);
 });
 
+// Telegram webhook info from Telegram API
+app.get('/api/telegram/webhook-info', async (req, res) => {
+  if (!bot) return res.status(400).json({ error: 'Bot not configured' });
+  try {
+    const info = await bot.telegram.getWebhookInfo();
+    res.json({ success: true, info });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to get webhook info' });
+  }
+});
+
+// Register or set webhook easily
+app.all('/api/telegram/set-webhook', async (req, res) => {
+  if (!bot) return res.status(400).json({ error: 'Bot not configured' });
+  try {
+    const targetUrl = (req.query.url as string) || (req.body && req.body.url) || `${req.protocol}://${req.get('host')}/api/webhook`;
+    await bot.telegram.setWebhook(targetUrl, {
+      allowed_updates: ['message', 'callback_query']
+    });
+    const info = await bot.telegram.getWebhookInfo();
+    res.json({ success: true, message: `Webhook set to ${targetUrl}`, info });
+  } catch (err: any) {
+    console.error('Failed to set Telegram webhook:', err);
+    res.status(500).json({ error: err?.message || 'Failed to set webhook' });
+  }
+});
+
+// Delete webhook (reverts to long polling if needed)
+app.all('/api/telegram/delete-webhook', async (req, res) => {
+  if (!bot) return res.status(400).json({ error: 'Bot not configured' });
+  try {
+    await bot.telegram.deleteWebhook({ drop_pending_updates: false });
+    res.json({ success: true, message: 'Webhook deleted successfully' });
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || 'Failed to delete webhook' });
+  }
+});
+
 // Webhook config for Vercel/Serverless
 if (bot) {
-  app.use('/api/webhook', (req, res, next) => {
+  app.post('/api/webhook', async (req, res) => {
     try {
-      return bot.webhookCallback('/api/webhook')(req, res, next);
-    } catch (e) {
-      console.warn('Telegram webhook callback error:', e);
-      return res.status(200).send('OK');
+      if (req.body && typeof req.body === 'object') {
+        await bot.handleUpdate(req.body, res);
+      }
+      if (!res.headersSent) {
+        res.status(200).send('OK');
+      }
+    } catch (e: any) {
+      console.warn('Telegram webhook callback error:', e?.message || e);
+      if (!res.headersSent) {
+        res.status(200).send('OK');
+      }
     }
   });
+
+  app.get('/api/webhook', (req, res) => {
+    res.json({
+      status: 'active',
+      bot: botStatus.username ? `@${botStatus.username}` : 'configured',
+      message: 'Telegram webhook endpoint is ready and operational.'
+    });
+  });
 } else {
-  app.post('/api/webhook', (req, res) => res.status(200).send('Bot not configured'));
+  app.all('/api/webhook', (req, res) => res.status(200).send('Bot not configured'));
 }
 
 

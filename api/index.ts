@@ -1,22 +1,32 @@
 import app from "../server";
 
 export default function handler(req: any, res: any) {
-  // Restore original URL if rewritten by Vercel or proxy
-  const forwardedUrl = req.headers["x-forwarded-url"] || req.headers["x-matched-path"] || req.headers["x-vercel-matched-path"];
-  if (forwardedUrl && typeof forwardedUrl === "string") {
+  // Restore original URL if rewritten by Vercel serverless gateway
+  const candidateUrl =
+    req.headers["x-matched-path"] ||
+    req.headers["x-forwarded-url"] ||
+    req.headers["x-vercel-matched-path"] ||
+    req.headers["x-invoke-path"] ||
+    req.url;
+
+  if (candidateUrl && typeof candidateUrl === "string") {
     try {
-      const parsed = new URL(forwardedUrl, "https://dummy.local");
-      if (parsed.pathname.startsWith("/api")) {
-        req.url = parsed.pathname + parsed.search;
+      const parsed = new URL(candidateUrl, "https://dummy.local");
+      let pathname = parsed.pathname;
+      if (!pathname.startsWith("/api")) {
+        pathname = "/api" + (pathname.startsWith("/") ? pathname : "/" + pathname);
       }
+      req.url = pathname + (parsed.search || "");
     } catch {
-      if (forwardedUrl.startsWith("/api")) {
-        req.url = forwardedUrl;
+      if (!candidateUrl.startsWith("/api")) {
+        req.url = "/api" + (candidateUrl.startsWith("/") ? candidateUrl : "/" + candidateUrl);
+      } else {
+        req.url = candidateUrl;
       }
     }
   }
 
-  // Ensure /api prefix for Express routing in serverless function
+  // Ensure /api prefix is present for Express routing
   if (req.url && !req.url.startsWith("/api")) {
     req.url = "/api" + (req.url.startsWith("/") ? req.url : "/" + req.url);
   }
