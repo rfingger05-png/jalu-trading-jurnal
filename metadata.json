@@ -1,0 +1,8 @@
+{
+  "name": "Trading Backtest Journal",
+  "description": "Professional disciplined trading backtest and live journal application with trade analytics, risk metrics, and Telegram bot multi-account integration.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
