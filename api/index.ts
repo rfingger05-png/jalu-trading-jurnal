@@ -1,6 +1,11 @@
 import app from "../server";
 
 export default function handler(req: any, res: any) {
+  // If Vercel serverless has already parsed the body, flag it for Express
+  if (req.body !== undefined && req.body !== null) {
+    req._body = true;
+  }
+
   // Restore original URL if rewritten by Vercel serverless gateway
   const candidateUrl =
     req.headers["x-matched-path"] ||

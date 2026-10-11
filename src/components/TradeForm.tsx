@@ -2,7 +2,7 @@ import React from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { cn } from '../lib/utils';
 import { Check, Info, Skull } from 'lucide-react';
-import { formatCurrency, resizeImage } from '../utils';
+import { formatCurrency, resizeImage, authFetch } from '../utils';
 import { User } from '../types';
 
 type FormValues = {
@@ -127,7 +127,7 @@ export default function TradeForm({ onTradeAdded, currentEquity = 10000, user }:
     };
 
     try {
-      const res = await fetch('/api/trades', {
+      const res = await authFetch('/api/trades', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)

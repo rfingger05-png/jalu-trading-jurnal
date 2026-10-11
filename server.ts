@@ -17,6 +17,12 @@ const PORT = 3000;
 app.get("/api/health", (req, res) => res.json({ status: "ok" }));
 app.get('/ping', (req, res) => res.status(200).send('OK'));
 
+app.use((req, res, next) => {
+  if (req.body !== undefined && req.body !== null && typeof req.body === 'object') {
+    (req as any)._body = true;
+  }
+  next();
+});
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(cookieParser());
@@ -238,115 +244,204 @@ async function initDb() {
 }
 initDb();
 
-// Auth Middleware
+// Auth Middleware: supports both httpOnly cookies and Authorization: Bearer token
 const authMiddleware = (req: any, res: any, next: any) => {
-  const token = req.cookies.token;
-  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+  let token = req.cookies?.token;
+  if (!token && req.headers?.authorization) {
+    const authHeader = req.headers.authorization;
+    if (authHeader.startsWith('Bearer ')) {
+      token = authHeader.substring(7).trim();
+    } else {
+      token = authHeader.trim();
+    }
+  }
+
+  if (!token) {
+    return res.status(401).json({ error: 'Unauthorized: Sesi tidak valid atau telah berakhir' });
+  }
+
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
     req.user = decoded;
     next();
   } catch (err) {
-    res.status(401).json({ error: 'Unauthorized' });
+    return res.status(401).json({ error: 'Unauthorized: Token kedaluwarsa atau tidak valid' });
   }
 };
 
 const adminMiddleware = (req: any, res: any, next: any) => {
   if (req.user?.role !== 'admin') {
-    return res.status(403).json({ error: 'Forbidden' });
+    return res.status(403).json({ error: 'Forbidden: Akses hanya untuk administrator' });
   }
   next();
 };
 
+// Public endpoint to get an active invite code (or sample demo code)
+app.get("/api/auth/invite-hint", async (req, res) => {
+  try {
+    const active = await db.execute("SELECT code FROM invite_codes WHERE is_used = 0 LIMIT 1");
+    if (active.rows.length > 0) {
+      return res.json({ available_code: active.rows[0].code });
+    }
+    // Create one if none available
+    const newCode = "TRADER" + Math.floor(1000 + Math.random() * 9000);
+    await db.execute({
+      sql: "INSERT OR IGNORE INTO invite_codes (code, is_used) VALUES (?, 0)",
+      args: [newCode]
+    });
+    res.json({ available_code: newCode });
+  } catch (e) {
+    res.json({ available_code: "WUCXB1WV" });
+  }
+});
+
 // Auth Routes
 app.post("/api/auth/register", async (req, res) => {
   try {
-    const { username, password, inviteCode } = req.body;
+    const { username, password, inviteCode } = req.body || {};
+    
+    if (!username || !password || !inviteCode) {
+      return res.status(400).json({ error: "Username, password, dan kode undangan wajib diisi." });
+    }
+
+    const cleanUsername = String(username).trim();
+    const cleanPassword = String(password).trim();
+    const cleanInvite = String(inviteCode).trim().toUpperCase();
+
+    if (cleanUsername.length < 3) {
+      return res.status(400).json({ error: "Username minimal 3 karakter." });
+    }
+    if (cleanPassword.length < 6) {
+      return res.status(400).json({ error: "Password minimal 6 karakter." });
+    }
     
     const inviteRes = await db.execute({
-      sql: "SELECT * FROM invite_codes WHERE code = ? AND is_used = 0",
-      args: [inviteCode]
+      sql: "SELECT * FROM invite_codes WHERE UPPER(code) = ? AND is_used = 0",
+      args: [cleanInvite]
     });
     
     if (inviteRes.rows.length === 0) {
-      return res.status(400).json({ error: "Invalid or already used invite code." });
+      return res.status(400).json({ error: "Kode undangan tidak valid atau sudah digunakan." });
     }
     
-    const hash = bcrypt.hashSync(password, 10);
+    const hash = bcrypt.hashSync(cleanPassword, 10);
     let userId;
     
     try {
       const insertUser = await db.execute({
         sql: "INSERT INTO users (username, password, role) VALUES (?, ?, 'user') RETURNING id",
-        args: [username, hash]
+        args: [cleanUsername, hash]
       });
-      userId = insertUser.rows[0].id;
+      userId = insertUser.rows[0]?.id;
     } catch (err) {
-      return res.status(400).json({ error: "Username already exists." });
+      return res.status(400).json({ error: "Username sudah terdaftar. Silakan pilih username lain." });
+    }
+
+    if (!userId) {
+      const u = await db.execute({
+        sql: "SELECT id FROM users WHERE LOWER(username) = LOWER(?)",
+        args: [cleanUsername]
+      });
+      userId = u.rows[0]?.id;
     }
     
     await db.execute({
-      sql: "UPDATE invite_codes SET is_used = 1, used_by = ? WHERE code = ?",
-      args: [username, inviteCode]
+      sql: "UPDATE invite_codes SET is_used = 1, used_by = ? WHERE UPPER(code) = ?",
+      args: [cleanUsername, cleanInvite]
     });
     
-    const token = jwt.sign({ id: userId, username, role: 'user' }, JWT_SECRET, { expiresIn: '7d' });
-    res.cookie('token', token, { httpOnly: true, secure: true, sameSite: 'none' });
+    const token = jwt.sign({ id: userId, username: cleanUsername, role: 'user' }, JWT_SECRET, { expiresIn: '30d' });
+    const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: isHttps,
+      sameSite: isHttps ? 'none' : 'lax',
+      maxAge: 30 * 24 * 60 * 60 * 1000
+    });
     
-    res.json({ user: {
-      id: userId, 
-      username, 
-      role: 'user',
-      current_mode: 'backtest',
-      currency: 'USD',
-      prop_firm_enabled: false,
-      prop_firm_balance: 1000,
-      prop_firm_daily_dd: 5,
-      prop_firm_max_dd: 10,
-      prop_firm_target: 10,
-      prop_firm_payout_total: 0
-    } });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: "Server error" });
+    res.json({
+      token,
+      user: {
+        id: userId, 
+        username: cleanUsername, 
+        role: 'user',
+        current_mode: 'backtest',
+        currency: 'USD',
+        prop_firm_enabled: false,
+        prop_firm_balance: 1000,
+        prop_firm_daily_dd: 5,
+        prop_firm_max_dd: 10,
+        prop_firm_target: 10,
+        prop_firm_payout_total: 0,
+        coins: 250,
+        active_character_id: 'jinwoo_e'
+      }
+    });
+  } catch (e: any) {
+    console.error("Register error:", e);
+    res.status(500).json({ error: e?.message || "Terjadi kesalahan server saat mendaftar" });
   }
 });
 
 app.post("/api/auth/login", async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const { username, password } = req.body || {};
+
+    if (!username || !password) {
+      return res.status(400).json({ error: "Username dan password wajib diisi." });
+    }
+
+    const cleanUsername = String(username).trim();
+    const cleanPassword = String(password);
     
     const userRes = await db.execute({
-      sql: "SELECT * FROM users WHERE username = ?",
-      args: [username]
+      sql: "SELECT * FROM users WHERE LOWER(username) = LOWER(?) OR username = ?",
+      args: [cleanUsername, cleanUsername]
     });
     
-    if (userRes.rows.length === 0) return res.status(400).json({ error: "Invalid credentials" });
+    if (userRes.rows.length === 0) {
+      return res.status(401).json({ error: "Username atau password salah." });
+    }
     
     const user = userRes.rows[0] as any;
-    const isValid = bcrypt.compareSync(password, user.password as string);
-    if (!isValid) return res.status(400).json({ error: "Invalid credentials" });
+    const isValid = bcrypt.compareSync(cleanPassword, user.password as string);
+    if (!isValid) {
+      return res.status(401).json({ error: "Username atau password salah." });
+    }
     
-    const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
-    res.cookie('token', token, { httpOnly: true, secure: true, sameSite: 'none' });
+    const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '30d' });
+    const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: isHttps,
+      sameSite: isHttps ? 'none' : 'lax',
+      maxAge: 30 * 24 * 60 * 60 * 1000
+    });
     
-    res.json({ user: {
-      id: user.id,
-      username: user.username,
-      role: user.role,
-      current_mode: user.current_mode || 'backtest',
-      currency: user.currency || 'USD',
-      initial_balance: user.initial_balance || 0,
-      prop_firm_enabled: user.prop_firm_enabled ? true : false,
-      prop_firm_balance: user.prop_firm_balance || 1000,
-      prop_firm_daily_dd: user.prop_firm_daily_dd || 5,
-      prop_firm_max_dd: user.prop_firm_max_dd || 10,
-      prop_firm_target: user.prop_firm_target || 10,
-      prop_firm_payout_total: user.prop_firm_payout_total || 0
-    } });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: "Server error" });
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        role: user.role,
+        current_mode: user.current_mode || 'backtest',
+        currency: user.currency || 'USD',
+        initial_balance: user.initial_balance || 0,
+        prop_firm_enabled: Boolean(user.prop_firm_enabled),
+        prop_firm_balance: user.prop_firm_balance || 1000,
+        prop_firm_daily_dd: user.prop_firm_daily_dd || 5,
+        prop_firm_max_dd: user.prop_firm_max_dd || 10,
+        prop_firm_target: user.prop_firm_target || 10,
+        prop_firm_payout_total: user.prop_firm_payout_total || 0,
+        telegram_id: user.telegram_id || null,
+        telegram_tag: user.telegram_tag || null,
+        coins: user.coins !== undefined && user.coins !== null ? Number(user.coins) : 250,
+        active_character_id: user.active_character_id || 'jinwoo_e'
+      }
+    });
+  } catch (e: any) {
+    console.error("Login error:", e);
+    res.status(500).json({ error: e?.message || "Terjadi kesalahan server saat login" });
   }
 });
 

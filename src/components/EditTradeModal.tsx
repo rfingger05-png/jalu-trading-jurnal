@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Trade } from '../types';
 import { X } from 'lucide-react';
 import { Input, Label } from './TradeForm';
-import { resizeImage, formatImageUrl } from '../utils';
+import { resizeImage, formatImageUrl, authFetch } from '../utils';
 
 export default function EditTradeModal({ trade, onClose, onUpdated }: { trade: Trade, onClose: () => void, onUpdated: () => void }) {
   const [result, setResult] = useState(trade.result);
@@ -22,7 +22,7 @@ export default function EditTradeModal({ trade, onClose, onUpdated }: { trade: T
     }
 
     try {
-      await fetch(`/api/trades/${trade.id}`, {
+      await authFetch(`/api/trades/${trade.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

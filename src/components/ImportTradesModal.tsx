@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import Papa from 'papaparse';
 import { X, Upload, Check, AlertCircle, FileText, ClipboardPaste, Camera, Image as ImageIcon } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { formatCurrency } from '../utils';
+import { formatCurrency, authFetch } from '../utils';
 
 type ImportTrade = {
   pair: string;
@@ -282,7 +282,7 @@ export default function ImportTradesModal({ onClose, onImported, user }: { onClo
     if (parsedTrades.length === 0) return;
     setLoading(true);
     try {
-      const res = await fetch('/api/trades/bulk', {
+      const res = await authFetch('/api/trades/bulk', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ trades: parsedTrades })

@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { User, Trade } from '../types';
 import { Check, Target, AlertTriangle, TrendingDown, RefreshCw, HandCoins } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { formatCurrency } from '../utils';
+import { formatCurrency, authFetch } from '../utils';
 
 interface PropFirmProps {
   user: User | null;
@@ -27,7 +27,7 @@ export default function PropFirm({ user, trades, onLocalUpdate, onTradeAdded }: 
     setPropFirmSaving(true);
     setPropFirmSuccess(false);
     try {
-      await fetch('/api/auth/prop-firm', {
+      await authFetch('/api/auth/prop-firm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -58,7 +58,7 @@ export default function PropFirm({ user, trades, onLocalUpdate, onTradeAdded }: 
     if (!payoutAmount || isNaN(Number(payoutAmount))) return;
     setPayoutLoading(true);
     try {
-      await fetch('/api/auth/prop-firm-payout', {
+      await authFetch('/api/auth/prop-firm-payout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

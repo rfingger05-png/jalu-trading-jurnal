@@ -3,7 +3,7 @@ import { Trade } from '../types';
 import { cn } from '../lib/utils';
 import { format, isSameDay, isSameWeek, isSameMonth } from 'date-fns';
 import { Sparkles, CheckCircle2, Edit2, Upload, Trash2, Camera, Image as ImageIcon } from 'lucide-react';
-import { formatCurrency, formatImageUrl } from '../utils';
+import { formatCurrency, formatImageUrl, authFetch } from '../utils';
 import EditTradeModal from './EditTradeModal';
 import ImportTradesModal from './ImportTradesModal';
 
@@ -76,7 +76,7 @@ export default function History({ trades, onTradeUpdated, user }: { trades: Trad
     }
     
     try {
-      await fetch(`/api/trades/${trade.id}`, {
+      await authFetch(`/api/trades/${trade.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...trade, result: newResult, realized_pl: pl })
@@ -95,7 +95,7 @@ export default function History({ trades, onTradeUpdated, user }: { trades: Trad
     reader.onload = async (event) => {
       const base64Str = event.target?.result as string;
       try {
-        await fetch(`/api/trades/${trade.id}`, {
+        await authFetch(`/api/trades/${trade.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ...trade, image: base64Str })
@@ -215,7 +215,7 @@ export default function History({ trades, onTradeUpdated, user }: { trades: Trad
                         <button onClick={() => setConfirmDeleteDate(null)} className="text-[10px] font-bold border border-slate-300 dark:border-neutral-700 px-3 py-1.5 hover:bg-slate-100 dark:bg-neutral-900 transition-all uppercase rounded-sm bg-white dark:bg-neutral-950 text-slate-500">Cancel</button>
                         <button onClick={async () => {
                           try {
-                            await fetch(`/api/trades/date/${dateStr}`, { method: 'DELETE' });
+                            await authFetch(`/api/trades/date/${dateStr}`, { method: 'DELETE' });
                             onTradeUpdated();
                             setConfirmDeleteDate(null);
                           } catch (e) {
@@ -341,7 +341,7 @@ export default function History({ trades, onTradeUpdated, user }: { trades: Trad
                                   <button onClick={() => setConfirmDelete(null)} className="text-[9px] font-bold bg-slate-100 dark:bg-neutral-950 text-slate-500 dark:text-neutral-500 hover:bg-slate-200 px-2 py-0.5 uppercase">Cancel</button>
                                   <button onClick={async () => {
                                     try {
-                                      await fetch(`/api/trades/${trade.id}`, { method: 'DELETE' });
+                                      await authFetch(`/api/trades/${trade.id}`, { method: 'DELETE' });
                                       setConfirmDelete(null);
                                       onTradeUpdated();
                                     } catch (e) {

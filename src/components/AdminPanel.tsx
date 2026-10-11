@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { InviteCode, User } from '../types';
 import { Shield, KeyRound, User as UserIcon } from 'lucide-react';
 import { format } from 'date-fns';
+import { authFetch } from '../utils';
 
 export default function AdminPanel() {
   const [invites, setInvites] = useState<InviteCode[]>([]);
@@ -15,7 +16,7 @@ export default function AdminPanel() {
 
   const fetchInvites = async () => {
     try {
-      const res = await fetch('/api/admin/invites?t=' + Date.now());
+      const res = await authFetch('/api/admin/invites?t=' + Date.now());
       if (res.ok) {
         const data = await res.json();
         setInvites(data.invites || []);
@@ -25,7 +26,7 @@ export default function AdminPanel() {
   
   const fetchUsers = async () => {
     try {
-      const res = await fetch('/api/admin/users?t=' + Date.now());
+      const res = await authFetch('/api/admin/users?t=' + Date.now());
       if (res.ok) {
         const data = await res.json();
         setUsers(data.users || []);
@@ -41,7 +42,7 @@ export default function AdminPanel() {
   const generateInvite = async () => {
     setLoading(true);
     try {
-      const resp = await fetch('/api/admin/invites', { method: 'POST' });
+      const resp = await authFetch('/api/admin/invites', { method: 'POST' });
       if (resp.ok) await fetchInvites();
     } catch (e) { console.error(e); } finally { setLoading(false); }
   };
@@ -50,7 +51,7 @@ export default function AdminPanel() {
     if (!newPassword || newPassword.length < 4) return alert('Password must be at least 4 characters');
     setSavingPassword(true);
     try {
-      const res = await fetch(`/api/admin/users/${userId}/password`, {
+      const res = await authFetch(`/api/admin/users/${userId}/password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password: newPassword })

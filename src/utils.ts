@@ -62,3 +62,35 @@ export const formatImageUrl = (url?: string | null): string => {
   }
   return url;
 };
+
+export function getAuthToken(): string | null {
+  try {
+    return localStorage.getItem('journal_token');
+  } catch (e) {
+    return null;
+  }
+}
+
+export function setAuthToken(token: string | null) {
+  try {
+    if (token) {
+      localStorage.setItem('journal_token', token);
+    } else {
+      localStorage.removeItem('journal_token');
+    }
+  } catch (e) {}
+}
+
+export async function authFetch(url: string, options: RequestInit = {}): Promise<Response> {
+  const token = getAuthToken();
+  const headers = new Headers(options.headers || {});
+  if (token && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+  return fetch(url, {
+    ...options,
+    headers,
+    credentials: 'include'
+  });
+}
+

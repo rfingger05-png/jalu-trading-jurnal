@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { User } from '../types';
 import { TestTubeDiagonal, MonitorPlay, Check, AlertCircle } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { authFetch } from '../utils';
 
 interface SettingsProps {
   user: User | null;
@@ -53,7 +54,7 @@ export default function Settings({ user, onUserUpdate, onLocalUpdate, onModeChan
     setTelegramSuccess(false);
     setError(null);
     try {
-      const res = await fetch('/api/auth/telegram-tag', {
+      const res = await authFetch('/api/auth/telegram-tag', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -86,7 +87,7 @@ export default function Settings({ user, onUserUpdate, onLocalUpdate, onModeChan
     setBalanceSaving(true);
     setBalanceSuccess(false);
     try {
-      await fetch('/api/auth/balance', {
+      await authFetch('/api/auth/balance', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ initial_balance: initialBalance === '' ? null : Number(initialBalance) })
@@ -107,7 +108,7 @@ export default function Settings({ user, onUserUpdate, onLocalUpdate, onModeChan
     setCurrencySaving(true);
     setCurrencySuccess(false);
     try {
-      await fetch('/api/auth/currency', {
+      await authFetch('/api/auth/currency', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ currency })
@@ -129,7 +130,7 @@ export default function Settings({ user, onUserUpdate, onLocalUpdate, onModeChan
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/auth/mode', {
+      const res = await authFetch('/api/auth/mode', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode })

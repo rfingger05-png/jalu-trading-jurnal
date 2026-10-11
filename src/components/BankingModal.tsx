@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X, ArrowDownCircle, ArrowUpCircle, CheckCircle2, Wallet, Banknote } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { User } from '../types';
+import { authFetch } from '../utils';
 
 export default function BankingModal({ onClose, onTransactionComplete }: { onClose: () => void, onTransactionComplete: () => void }) {
   const [tab, setTab] = useState<'deposit' | 'withdrawal'>('deposit');
@@ -15,7 +16,7 @@ export default function BankingModal({ onClose, onTransactionComplete }: { onClo
 
     setLoading(true);
     try {
-      const res = await fetch('/api/transactions', {
+      const res = await authFetch('/api/transactions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type: tab, amount: Number(amount) })

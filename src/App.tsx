@@ -26,7 +26,7 @@ import {
   TrendingUp,
   User as UserIcon
 } from 'lucide-react';
-import { formatCurrency } from './utils';
+import { formatCurrency, authFetch, setAuthToken } from './utils';
 
 export default function App() {
   const [isPublicRoute, setIsPublicRoute] = useState(false);
@@ -81,13 +81,16 @@ export default function App() {
 
   const fetchUser = async () => {
     try {
-      const res = await fetch('/api/auth/me?t=' + Date.now(), { credentials: 'same-origin' });
+      const res = await authFetch('/api/auth/me?t=' + Date.now());
       if (res.ok) {
         const data = await res.json();
         setUser(data.user);
+      } else if (res.status === 401) {
+        setAuthToken(null);
+        setUser(null);
       }
     } catch(e) {
-      // Not logged in
+      // Not logged in or network error
     } finally {
       setUserLoading(false);
     }
@@ -102,10 +105,11 @@ export default function App() {
   const fetchTrades = async () => {
     try {
       const [tradesRes, transactionsRes] = await Promise.all([
-        fetch('/api/trades?t=' + Date.now(), { credentials: 'same-origin' }),
-        fetch('/api/transactions?t=' + Date.now(), { credentials: 'same-origin' })
+        authFetch('/api/trades?t=' + Date.now()),
+        authFetch('/api/transactions?t=' + Date.now())
       ]);
       if (tradesRes.status === 401 || transactionsRes.status === 401) {
+        setAuthToken(null);
         setUser(null);
         return;
       }
@@ -139,12 +143,14 @@ export default function App() {
 
   const handleLogout = async () => {
     try {
-      await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+      await authFetch('/api/auth/logout', { method: 'POST' });
+    } catch(e) {
+      // Ignored
+    } finally {
+      setAuthToken(null);
       setUser(null);
       setTrades([]);
       setTransactions([]);
-    } catch(e) {
-      // Ignored
     }
   };
 
