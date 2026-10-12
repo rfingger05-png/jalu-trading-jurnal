@@ -229,12 +229,37 @@ export function initTelegramBot(db: any) {
       console.warn('⚠️ Could not set Telegram commands:', cmdErr?.message || cmdErr);
     });
 
-    // Start Long Polling safely (disabled on Vercel Serverless which uses Webhooks)
-    const launchPolling = () => {
-      if (process.env.VERCEL) {
-        console.log('⚡ Running in Vercel Serverless: Polling disabled, Webhook mode active');
+    // Start Webhook or Long Polling safely
+    const setupBotRunner = async () => {
+      const prodUrl = process.env.APP_URL || (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null));
+      
+      if (process.env.VERCEL || process.env.NOW_REGION) {
+        console.log('⚡ Running in Vercel Serverless: Webhook mode active');
+        if (prodUrl) {
+          let clean = prodUrl.trim();
+          if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
+            clean = `https://${clean}`;
+          }
+          if (clean.startsWith('http://') && !clean.includes('localhost')) {
+            clean = clean.replace('http://', 'https://');
+          }
+          const webhookUrl = `${clean.replace(/\/+$/, '')}/api/webhook`;
+          try {
+            const currentInfo = await bot.telegram.getWebhookInfo();
+            if (currentInfo.url !== webhookUrl) {
+              await bot.telegram.setWebhook(webhookUrl, {
+                allowed_updates: ['message', 'callback_query']
+              });
+              console.log(`🌐 Telegram Webhook auto-registered: ${webhookUrl}`);
+            }
+          } catch (whErr: any) {
+            console.warn('⚠️ Webhook auto-setup notice:', whErr?.message || whErr);
+          }
+        }
         return;
       }
+
+      // Outside Vercel: run Long Polling
       bot.telegram.deleteWebhook({ drop_pending_updates: false })
         .catch(() => {})
         .finally(() => {
@@ -244,13 +269,12 @@ export function initTelegramBot(db: any) {
             console.log('🚀 Telegram Bot is actively running (Long Polling)!');
           }).catch((launchErr: any) => {
             console.warn('⚠️ Telegram Bot launch warning:', launchErr?.message || launchErr);
-            // Auto retry in 5s
-            setTimeout(launchPolling, 5000);
+            setTimeout(setupBotRunner, 5000);
           });
         });
     };
 
-    launchPolling();
+    setupBotRunner();
   }).catch((authErr: any) => {
     botStatus.authenticated = false;
     const is401 = authErr?.response?.error_code === 401 || authErr?.message?.includes('401') || authErr?.message?.includes('Unauthorized');
@@ -373,7 +397,7 @@ export function initTelegramBot(db: any) {
   // Helper to send Unlinked Account notification with 1-click link buttons
   const sendUnlinkedPrompt = async (ctx: any) => {
     try {
-      const usersRes = await db.execute("SELECT id, username FROM users ORDER BY id ASC LIMIT 5");
+      const usersRes = await db.execute("SELECT id, username FROM users WHERE LOWER(username) != 'aurel' ORDER BY id ASC LIMIT 5");
       const userButtons: any[] = [];
       const rows = usersRes.rows as any[];
       

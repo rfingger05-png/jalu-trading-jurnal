@@ -16,21 +16,22 @@ export default function handler(req: any, res: any) {
     (req as any)._body = true;
   }
 
-  // 2. Safe URL Normalization
+  // 2. Safe URL Normalization for Vercel Rewrites
   let targetUrl =
+    req.headers["x-matched-path"] ||
     req.headers["x-forwarded-url"] ||
     req.headers["x-vercel-original-url"] ||
     req.headers["x-real-path"] ||
     req.url;
 
-  // Handle rewrite capture groups if targetUrl was rewritten to /api/index
-  if (
-    typeof targetUrl === "string" &&
-    (targetUrl.startsWith("/api/index") || targetUrl === "/api" || targetUrl === "/api/")
-  ) {
-    if (req.query && (req.query["0"] || req.query.path || req.query.slug)) {
-      const subpath = req.query["0"] || req.query.path || req.query.slug;
-      targetUrl = `/api/${Array.isArray(subpath) ? subpath.join("/") : subpath}`;
+  // Handle rewrite capture groups if query contains path
+  if (req.query && (req.query["0"] || req.query.path || req.query.slug)) {
+    const subpath = req.query["0"] || req.query.path || req.query.slug;
+    const cleanSub = (Array.isArray(subpath) ? subpath.join("/") : String(subpath)).replace(/^\/+/, "");
+    if (cleanSub.startsWith("api/")) {
+      targetUrl = `/${cleanSub}`;
+    } else {
+      targetUrl = `/api/${cleanSub}`;
     }
   }
 
@@ -53,6 +54,17 @@ export default function handler(req: any, res: any) {
 
   if (req.url && !req.url.startsWith("/api")) {
     req.url = "/api" + (req.url.startsWith("/") ? req.url : "/" + req.url);
+  }
+
+  // Preserve query string if missing
+  if (
+    req.url &&
+    !req.url.includes("?") &&
+    typeof req.headers["x-forwarded-url"] === "string" &&
+    req.headers["x-forwarded-url"].includes("?")
+  ) {
+    const origQ = req.headers["x-forwarded-url"].split("?")[1];
+    if (origQ) req.url += `?${origQ}`;
   }
 
   // 3. Keep Lambda alive until Express finishes sending the response
