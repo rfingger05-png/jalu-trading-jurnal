@@ -7,7 +7,7 @@ import path from "path";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import cookieParser from "cookie-parser";
-import { initTelegramBot, botStatus } from "./src/lib/telegram";
+import { initTelegramBot, botStatus } from "./src/lib/telegram.ts";
 
 const JWT_SECRET = process.env.JWT_SECRET || 'trading_journal_super_secret_key_123';
 
@@ -415,7 +415,7 @@ app.post("/api/auth/register", async (req, res) => {
     }
     
     const token = jwt.sign({ id: userId, username: cleanUsername, role: 'user' }, JWT_SECRET, { expiresIn: '30d' });
-    const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
+    const isHttps = req.headers?.['x-forwarded-proto'] === 'https' || Boolean((req as any).connection?.encrypted) || Boolean((req as any).socket?.encrypted);
     res.cookie('token', token, {
       httpOnly: true,
       secure: isHttps,
@@ -474,7 +474,7 @@ app.post("/api/auth/login", async (req, res) => {
     }
     
     const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '30d' });
-    const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
+    const isHttps = req.headers?.['x-forwarded-proto'] === 'https' || Boolean((req as any).connection?.encrypted) || Boolean((req as any).socket?.encrypted);
     res.cookie('token', token, {
       httpOnly: true,
       secure: isHttps,
