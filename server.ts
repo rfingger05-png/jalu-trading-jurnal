@@ -9,7 +9,7 @@ import bcrypt from "bcryptjs";
 import cookieParser from "cookie-parser";
 import { initTelegramBot, botStatus } from "./src/lib/telegram";
 
-const JWT_SECRET = process.env.JWT_SECRET || 'aurel_super_secret_key_123';
+const JWT_SECRET = process.env.JWT_SECRET || 'trading_journal_super_secret_key_123';
 
 const app = express();
 
@@ -234,16 +234,8 @@ async function initDb() {
 
     // Add run_mode column if it doesn't exist
 
-    // Seed default admin user
-    const adminCheck = await db.execute("SELECT id FROM users WHERE username = 'aurel'");
-    if (adminCheck.rows.length === 0) {
-      const hash = bcrypt.hashSync("aurel22", 10);
-      await db.execute({
-        sql: "INSERT INTO users (username, password, role) VALUES (?, ?, 'admin')",
-        args: ["aurel", hash]
-      });
-      console.log("Default admin account created.");
-    }
+    // Ensure singga has admin role if exists
+    await db.execute("UPDATE users SET role = 'admin' WHERE username = 'singga'");
   } catch (e) {
     console.error("Error initializing DB:", e);
   }

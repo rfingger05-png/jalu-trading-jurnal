@@ -2,7 +2,7 @@ import React, { useMemo } from 'react';
 import { Trade, User, Transaction } from '../types';
 import { cn } from '../lib/utils';
 import { format, subDays, startOfDay, isSameDay } from 'date-fns';
-import { formatCurrency } from '../utils';
+import { formatCurrency, safeParseDate, safeFormatDate } from '../utils';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, Activity, Calendar, Clock, DollarSign, Wallet } from 'lucide-react';
 
@@ -27,7 +27,7 @@ export default function Dashboard({
   const completedTrades = useMemo(() => {
     return trades
       .filter(t => t.result && t.result !== 'Pending')
-      .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+      .sort((a, b) => safeParseDate(a.created_at).getTime() - safeParseDate(b.created_at).getTime());
   }, [trades]);
 
   const wins = completedTrades.filter(t => t.result.toLowerCase() === 'win').length;
@@ -110,10 +110,10 @@ export default function Dashboard({
 
     const points = completedTrades.map(t => {
       running += (t.realized_pl || 0);
-      const d = new Date(t.created_at);
+      const d = safeParseDate(t.created_at);
       return {
-        date: format(d, 'MMM dd'),
-        fullDate: format(d, 'dd MMM yyyy, HH:mm'),
+        date: safeFormatDate(d, 'MMM dd'),
+        fullDate: safeFormatDate(d, 'dd MMM yyyy, HH:mm'),
         balance: running,
         tradePL: t.realized_pl || 0,
         pair: t.pair
@@ -131,7 +131,7 @@ export default function Dashboard({
     for (let i = 0; i <= daysTotal; i++) {
       const d = subDays(today, daysTotal - i);
       const dayTrades = completedTrades.filter(t => {
-        const tDate = startOfDay(new Date(t.created_at));
+        const tDate = startOfDay(safeParseDate(t.created_at));
         return isSameDay(tDate, d);
       });
 
@@ -161,7 +161,7 @@ export default function Dashboard({
     const acc: Record<string, { trades: number, wins: number, pnl: number }> = {};
     
     completedTrades.forEach(t => {
-      const date = new Date(t.created_at);
+      const date = safeParseDate(t.created_at);
       const dayName = days[date.getDay()];
       if (!acc[dayName]) acc[dayName] = { trades: 0, wins: 0, pnl: 0 };
       acc[dayName].trades += 1;
@@ -189,7 +189,7 @@ export default function Dashboard({
     };
     
     completedTrades.forEach(t => {
-      const date = new Date(t.created_at);
+      const date = safeParseDate(t.created_at);
       const hour = date.getHours();
       let session = 'Asian (00:00 - 08:00)';
       if (hour >= 8 && hour < 13) session = 'London (08:00 - 13:00)';
@@ -211,7 +211,7 @@ export default function Dashboard({
   // Recent 5 Trades
   const recentTrades = useMemo(() => {
     return [...trades]
-      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      .sort((a, b) => safeParseDate(b.created_at).getTime() - safeParseDate(a.created_at).getTime())
       .slice(0, 5);
   }, [trades]);
 
@@ -518,7 +518,7 @@ export default function Dashboard({
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
                   {recentTrades.map(t => (
                     <tr key={t.id} className="hover:bg-slate-50 dark:hover:bg-slate-900/30">
-                      <td className="px-3 py-2.5 text-slate-500">{format(new Date(t.created_at), 'dd MMM HH:mm')}</td>
+                      <td className="px-3 py-2.5 text-slate-500">{safeFormatDate(t.created_at, 'dd MMM HH:mm')}</td>
                       <td className="px-3 py-2.5 font-bold text-slate-900 dark:text-white">{t.pair}</td>
                       <td className="px-3 py-2.5">
                         <span className={cn("px-1.5 py-0.5 rounded-xs text-[10px] font-semibold", t.direction === 'Buy' ? "text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40" : "text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/40")}>

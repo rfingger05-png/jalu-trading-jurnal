@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { InviteCode, User } from '../types';
 import { Shield, KeyRound, User as UserIcon } from 'lucide-react';
 import { format } from 'date-fns';
-import { authFetch } from '../utils';
+import { authFetch, safeFormatDate } from '../utils';
 
 export default function AdminPanel() {
   const [invites, setInvites] = useState<InviteCode[]>([]);
@@ -13,6 +13,8 @@ export default function AdminPanel() {
   const [passwordChangeId, setPasswordChangeId] = useState<number | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [savingPassword, setSavingPassword] = useState(false);
+
+  const [feedbackMsg, setFeedbackMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
   const fetchInvites = async () => {
     try {
@@ -48,8 +50,12 @@ export default function AdminPanel() {
   };
   
   const handleChangePassword = async (userId: number) => {
-    if (!newPassword || newPassword.length < 4) return alert('Password must be at least 4 characters');
+    if (!newPassword || newPassword.length < 4) {
+      setFeedbackMsg({ text: 'Password minimal 4 karakter.', type: 'error' });
+      return;
+    }
     setSavingPassword(true);
+    setFeedbackMsg(null);
     try {
       const res = await authFetch(`/api/admin/users/${userId}/password`, {
         method: 'POST',
@@ -57,16 +63,16 @@ export default function AdminPanel() {
         body: JSON.stringify({ password: newPassword })
       });
       if (res.ok) {
-        alert('Password updated successfully');
+        setFeedbackMsg({ text: 'Password berhasil diperbarui.', type: 'success' });
         setPasswordChangeId(null);
         setNewPassword('');
       } else {
         const err = await res.json();
-        alert(err.error || 'Failed to update password');
+        setFeedbackMsg({ text: err.error || 'Gagal mengubah password.', type: 'error' });
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      alert('An error occurred');
+      setFeedbackMsg({ text: e?.message || 'Terjadi kesalahan sistem.', type: 'error' });
     } finally {
       setSavingPassword(false);
     }
@@ -79,6 +85,11 @@ export default function AdminPanel() {
       </div>
       
       <div className="flex-1 overflow-auto bg-slate-50 dark:bg-neutral-950/50 p-6 flex flex-col gap-10">
+        {feedbackMsg && (
+          <div className={`p-3 rounded text-xs font-medium border ${feedbackMsg.type === 'success' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-rose-500/10 border-rose-500/30 text-rose-400'}`}>
+            {feedbackMsg.text}
+          </div>
+        )}
         {/* Invites Section */}
         <div>
           <div className="flex justify-between items-center mb-4">
@@ -132,7 +143,7 @@ export default function AdminPanel() {
                             {u.current_mode || 'backtest'}
                           </span>
                         </span>
-                        <span className="text-[10px] uppercase tracking-widest font-bold text-slate-400">ID: {u.id} • Joined {u.created_at ? format(new Date(!isNaN(new Date(u.created_at).getTime()) ? u.created_at : (!isNaN(new Date(u.created_at.replace(/\./g, '-').replace(' ', 'T') + 'Z').getTime()) ? u.created_at.replace(/\./g, '-').replace(' ', 'T') + 'Z' : new Date())), 'MMM dd, yyyy') : 'Unknown'}</span>
+                        <span className="text-[10px] uppercase tracking-widest font-bold text-slate-400">ID: {u.id} • Joined {safeFormatDate(u.created_at, 'MMM dd, yyyy', 'Unknown')}</span>
                      </div>
                   </div>
                   

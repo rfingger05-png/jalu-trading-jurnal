@@ -1,3 +1,5 @@
+import { format } from 'date-fns';
+
 export function formatCurrency(val: number | null | undefined, currency: string = 'USD'): string {
   if (val == null || !isFinite(val)) return '-';
   const absVal = Math.abs(val);
@@ -93,4 +95,33 @@ export async function authFetch(url: string, options: RequestInit = {}): Promise
     credentials: 'include'
   });
 }
+
+export function safeParseDate(val: any): Date {
+  if (!val) return new Date();
+  if (val instanceof Date) return isNaN(val.getTime()) ? new Date() : val;
+  const str = String(val).trim();
+  let d = new Date(str);
+  if (!isNaN(d.getTime())) return d;
+  
+  // Normalize "YYYY-MM-DD HH:mm:ss" or "YYYY.MM.DD HH:mm:ss"
+  const iso = str.replace(/\./g, '-').replace(' ', 'T');
+  d = new Date(iso);
+  if (!isNaN(d.getTime())) return d;
+
+  d = new Date(iso + 'Z');
+  if (!isNaN(d.getTime())) return d;
+
+  return new Date();
+}
+
+export function safeFormatDate(val: any, formatPattern: string, fallback: string = '-'): string {
+  try {
+    const d = safeParseDate(val);
+    if (isNaN(d.getTime())) return fallback;
+    return format(d, formatPattern);
+  } catch {
+    return fallback;
+  }
+}
+
 
