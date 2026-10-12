@@ -3,6 +3,7 @@ import { Trade } from '../types';
 import Dashboard from './Dashboard';
 import History from './History';
 import { Share2 } from 'lucide-react';
+import { authFetch } from '../utils';
 
 export default function PublicProfile({ username }: { username: string }) {
   const [trades, setTrades] = useState<Trade[]>([]);
@@ -11,7 +12,7 @@ export default function PublicProfile({ username }: { username: string }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`/api/public/user/${username}`)
+    authFetch(`/api/public/user/${username}`)
       .then(res => {
         if (!res.ok) throw new Error("User not found");
         return res.json();

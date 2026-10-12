@@ -306,28 +306,28 @@ app.post("/api/auth/register", async (req, res) => {
   try {
     const { username, password, inviteCode } = req.body || {};
     
-    if (!username || !password || !inviteCode) {
-      return res.status(400).json({ error: "Username, password, dan kode undangan wajib diisi." });
+    if (!username || !password) {
+      return res.status(400).json({ error: "Username dan password wajib diisi." });
     }
 
     const cleanUsername = String(username).trim();
     const cleanPassword = String(password).trim();
-    const cleanInvite = String(inviteCode).trim().toUpperCase();
 
-    if (cleanUsername.length < 3) {
-      return res.status(400).json({ error: "Username minimal 3 karakter." });
+    if (cleanUsername.length < 2) {
+      return res.status(400).json({ error: "Username minimal 2 karakter." });
     }
-    if (cleanPassword.length < 6) {
-      return res.status(400).json({ error: "Password minimal 6 karakter." });
+    if (cleanPassword.length < 4) {
+      return res.status(400).json({ error: "Password minimal 4 karakter." });
     }
     
-    const inviteRes = await db.execute({
-      sql: "SELECT * FROM invite_codes WHERE UPPER(code) = ? AND is_used = 0",
-      args: [cleanInvite]
-    });
-    
-    if (inviteRes.rows.length === 0) {
-      return res.status(400).json({ error: "Kode undangan tidak valid atau sudah digunakan." });
+    if (inviteCode && String(inviteCode).trim()) {
+      const cleanInvite = String(inviteCode).trim().toUpperCase();
+      try {
+        await db.execute({
+          sql: "UPDATE invite_codes SET is_used = 1, used_by = ? WHERE UPPER(code) = ?",
+          args: [cleanUsername, cleanInvite]
+        });
+      } catch (err) {}
     }
     
     const hash = bcrypt.hashSync(cleanPassword, 10);
@@ -351,10 +351,14 @@ app.post("/api/auth/register", async (req, res) => {
       userId = u.rows[0]?.id;
     }
     
-    await db.execute({
-      sql: "UPDATE invite_codes SET is_used = 1, used_by = ? WHERE UPPER(code) = ?",
-      args: [cleanUsername, cleanInvite]
-    });
+    if (inviteCode && String(inviteCode).trim()) {
+      try {
+        await db.execute({
+          sql: "UPDATE invite_codes SET is_used = 1, used_by = ? WHERE UPPER(code) = ?",
+          args: [cleanUsername, String(inviteCode).trim().toUpperCase()]
+        });
+      } catch (err) {}
+    }
     
     const token = jwt.sign({ id: userId, username: cleanUsername, role: 'user' }, JWT_SECRET, { expiresIn: '30d' });
     const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';

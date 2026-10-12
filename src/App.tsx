@@ -69,7 +69,7 @@ export default function App() {
   const [telegramBotInfo, setTelegramBotInfo] = useState<{ authenticated: boolean; username: string | null } | null>(null);
 
   useEffect(() => {
-    fetch('/api/telegram/status')
+    authFetch('/api/telegram/status')
       .then(r => r.json())
       .then(d => {
         if (d?.authenticated) {

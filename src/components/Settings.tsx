@@ -33,7 +33,7 @@ export default function Settings({ user, onUserUpdate, onLocalUpdate, onModeChan
   const [botStatus, setBotStatus] = useState<{ configured: boolean; authenticated: boolean; username: string | null; error: string | null } | null>(null);
 
   useEffect(() => {
-    fetch('/api/telegram/status')
+    authFetch('/api/telegram/status')
       .then(r => r.json())
       .then(data => setBotStatus(data))
       .catch(() => {});
