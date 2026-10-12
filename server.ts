@@ -18,7 +18,13 @@ app.get("/api/health", (req, res) => res.json({ status: "ok" }));
 app.get('/ping', (req, res) => res.status(200).send('OK'));
 
 app.use((req, res, next) => {
-  if (req.body !== undefined && req.body !== null && typeof req.body === 'object') {
+  if (typeof req.body === 'string') {
+    try { req.body = JSON.parse(req.body); } catch (e) {}
+    (req as any)._body = true;
+  } else if (Buffer.isBuffer(req.body)) {
+    try { req.body = JSON.parse(req.body.toString('utf8')); } catch (e) {}
+    (req as any)._body = true;
+  } else if (req.body !== undefined && req.body !== null && typeof req.body === 'object') {
     (req as any)._body = true;
   }
   next();
