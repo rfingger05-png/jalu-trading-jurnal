@@ -7,7 +7,7 @@ import path from "path";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import cookieParser from "cookie-parser";
-import { initTelegramBot, botStatus } from "./src/lib/telegram.ts";
+import { initTelegramBot, botStatus } from "./src/lib/telegram.js";
 
 const JWT_SECRET = process.env.JWT_SECRET || 'trading_journal_super_secret_key_123';
 

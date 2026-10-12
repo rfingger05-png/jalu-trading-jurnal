@@ -1,31 +1,4 @@
-import appStatic from "../server.ts";
-
-let appInstance: any = appStatic;
-
-async function getAppInstance() {
-  if (appInstance) return appInstance;
-  try {
-    const mod = await import("../server.ts");
-    appInstance = mod.default || mod;
-    return appInstance;
-  } catch {
-    try {
-      const mod = await import("../server.js");
-      appInstance = mod.default || mod;
-      return appInstance;
-    } catch {
-      try {
-        const mod = await import("../dist/server.cjs");
-        appInstance = mod.default || mod;
-        return appInstance;
-      } catch {
-        const mod = await import("../server");
-        appInstance = mod.default || mod;
-        return appInstance;
-      }
-    }
-  }
-}
+import app from "../server.js";
 
 export default async function handler(req: any, res: any) {
   try {
@@ -94,8 +67,6 @@ export default async function handler(req: any, res: any) {
       const origQ = req.headers["x-forwarded-url"].split("?")[1];
       if (origQ) req.url += `?${origQ}`;
     }
-
-    const app = await getAppInstance();
 
     // 3. Keep Lambda alive until Express finishes sending the response
     return await new Promise((resolve, reject) => {
