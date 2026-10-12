@@ -38,6 +38,7 @@ export type User = {
   prop_firm_payout_total?: number;
   telegram_id?: string;
   telegram_tag?: string;
+  default_risk?: number;
   created_at: string;
 };
 

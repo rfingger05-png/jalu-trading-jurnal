@@ -34,25 +34,106 @@ const sendOrEdit = async (ctx: any, msg: string, useBackButton: boolean = false,
   }
 };
 
-// Calculate pips for trade
+// Calculate pips for trade accurately (Gold: 1 point / $1.00 = 10 pips, 1 pip = 0.10 price move = $10 / standard lot)
 export function calculatePips(pair: string, entry: number, exitPrice: number, pl: number, lot: number, isWin: boolean): number {
   const p = (pair || 'XAUUSD').toUpperCase();
-  let multiplier = 10;
-  if (p.includes('JPY')) multiplier = 100;
-  else if (p.includes('EUR') || p.includes('GBP') || p.includes('AUD') || p.includes('NZD') || p.includes('USD')) {
-    if (!p.includes('XAU')) multiplier = 10000;
-  } else if (p.includes('BTC') || p.includes('ETH')) multiplier = 1;
+  const safeLot = lot > 0 ? lot : 0.1;
 
+  // 1. Direct price difference (if entry & exit/tp are given)
   if (entry > 0 && exitPrice > 0 && Math.abs(exitPrice - entry) > 0) {
+    let multiplier = 10; // XAUUSD: 1 point ($1.00 move) = 10 pips, 0.10 move = 1 pip
+    if (p.includes('JPY')) multiplier = 100;
+    else if (p.includes('EUR') || p.includes('GBP') || p.includes('AUD') || p.includes('NZD') || p.includes('CAD') || p.includes('CHF') || (p.includes('USD') && !p.includes('XAU') && !p.includes('BTC') && !p.includes('ETH'))) {
+      multiplier = 10000;
+    } else if (p.includes('BTC') || p.includes('ETH')) multiplier = 1;
+
     const diff = Math.round(Math.abs(exitPrice - entry) * multiplier);
     if (diff > 0 && diff < 50000) return isWin ? diff : -diff;
   }
-  if (pl !== 0 && lot > 0) {
-    const est = Math.round(Math.abs(pl) / (lot * (multiplier === 10000 ? 10 : 1)));
-    if (est > 0 && est < 50000) return pl >= 0 ? est : -est;
+
+  // 2. Fallback using Realized P&L & lot size:
+  // Standard Pip value for 1.00 Lot:
+  // - Gold (XAUUSD): 1 pip = 0.10 move = $10 per 1.00 standard lot (100 oz contract)
+  // - Major Forex (EURUSD, GBPUSD, etc.): 1 pip = 0.0001 = $10 per 1.00 standard lot
+  // - JPY pairs: 1 pip = 0.01 = ~$8.5 - $10 per 1.00 lot
+  // Formula: Pips = P/L / (Lot Size * Pip Value per 1.00 Lot)
+  // Example: On Gold, $100 profit with 0.10 lot => 100 / (0.10 * 10) = 100 pips! (Fixes 1000 pips bug)
+  if (pl !== 0 && safeLot > 0) {
+    let pipValuePerLot = 10; // Standard $10 per lot for 1 pip
+    if (p.includes('BTC') || p.includes('ETH')) {
+      pipValuePerLot = 1;
+    } else if (p.includes('JPY')) {
+      pipValuePerLot = 8.5;
+    }
+
+    const pipWorth = safeLot * pipValuePerLot;
+    if (pipWorth > 0) {
+      const calculatedPips = Math.round(Math.abs(pl) / pipWorth);
+      if (calculatedPips > 0 && calculatedPips < 50000) {
+        return pl >= 0 ? calculatedPips : -calculatedPips;
+      }
+    }
   }
+
   return Math.round(pl);
 }
+
+// Forex & Economic News types and caching
+export interface ForexNewsItem {
+  title: string;
+  country: string;
+  date: string;
+  impact: string; // 'High' | 'Medium' | 'Low' | 'Holiday'
+  forecast?: string;
+  previous?: string;
+}
+
+let cachedNews: { data: ForexNewsItem[]; fetchedAt: number } | null = null;
+
+export async function fetchForexNews(force = false): Promise<ForexNewsItem[]> {
+  const now = Date.now();
+  if (!force && cachedNews && (now - cachedNews.fetchedAt < 10 * 60 * 1000)) {
+    return cachedNews.data;
+  }
+  try {
+    const res = await fetch('https://nfs.faireconomy.media/ff_calendar_thisweek.json', {
+      headers: { 'User-Agent': 'Mozilla/5.0 (TelegramTradingJournalBot)' }
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json() as ForexNewsItem[];
+    if (Array.isArray(data) && data.length > 0) {
+      cachedNews = { data, fetchedAt: now };
+      return data;
+    }
+  } catch (err) {
+    console.warn('Could not fetch live ForexFactory news, using cache or fallback:', err);
+  }
+  return cachedNews?.data || [];
+}
+
+const getCurrencyFlag = (country: string) => {
+  switch ((country || '').toUpperCase()) {
+    case 'USD': return '🇺🇸';
+    case 'EUR': return '🇪🇺';
+    case 'GBP': return '🇬🇧';
+    case 'JPY': return '🇯🇵';
+    case 'AUD': return '🇦🇺';
+    case 'CAD': return '🇨🇦';
+    case 'CHF': return '🇨🇭';
+    case 'NZD': return '🇳🇿';
+    case 'CNY': return '🇨🇳';
+    default: return '🌐';
+  }
+};
+
+const getNewsImpactBadge = (impact: string) => {
+  switch ((impact || '').toLowerCase()) {
+    case 'high': return '🔴 <b>[HIGH]</b>';
+    case 'medium': return '🟠 <b>[MED]</b>';
+    case 'low': return '🟡 <b>[LOW]</b>';
+    default: return '⚪ <b>[HOLIDAY]</b>';
+  }
+};
 
 // Parse caption or string format trade
 export function parseTradeData(content: string) {
@@ -220,6 +301,8 @@ export function initTelegramBot(db: any) {
       { command: 'today', description: '📊 Rekap statistik performa hari ini' },
       { command: 'weekly', description: '📈 Rekap performa 7 hari terakhir' },
       { command: 'lot', description: '🧮 Hitung lot otomatis berdasarkan toleransi risiko' },
+      { command: 'news', description: '📰 Kalender ekonomi Forex & berita pasar high-impact' },
+      { command: 'setrisk', description: '🛡️ Atur toleransi risiko per trade: /setrisk [persen]' },
       { command: 'deposit', description: '📥 Catat deposit saldo: /deposit [jumlah]' },
       { command: 'wd', description: '📤 Catat penarikan keuntungan: /wd [jumlah]' },
       { command: 'undo', description: '↩️ Batalkan/hapus trade terakhir' },
@@ -300,6 +383,9 @@ export function initTelegramBot(db: any) {
           PRIMARY KEY (telegram_id, user_id)
         )
       `);
+      try {
+        await db.execute("ALTER TABLE users ADD COLUMN default_risk REAL DEFAULT 2.5");
+      } catch (_) {}
     } catch (e) {
       console.error("ensureTables error:", e);
     }
@@ -1404,7 +1490,7 @@ export function initTelegramBot(db: any) {
   bot.action('cmd_today', (ctx) => getStatsByTimeframe(ctx, 'today'));
   bot.action('cmd_weekly', (ctx) => getStatsByTimeframe(ctx, 'weekly'));
 
-  // COMMAND: /lot - Automatic position size calculator
+  // COMMAND: /lot - Automatic position size calculator with custom risk integration
   const handleLotCalc = async (ctx: any) => {
     try {
       const parts = (ctx.message?.text || '').trim().split(/\s+/);
@@ -1413,31 +1499,38 @@ export function initTelegramBot(db: any) {
       const telegramId = ctx.from?.id?.toString();
       const user = await getActiveUser(telegramId, ctx.from?.username);
       const eq = user ? (await getUserEquityData(user.id, user)).currentEquity : 1000;
+      const userRisk = (user && user.default_risk !== undefined && user.default_risk !== null && !isNaN(Number(user.default_risk)))
+        ? Number(user.default_risk)
+        : 2.5;
+
+      const userRiskNominal = (eq * (userRisk / 100));
 
       let msg = `🧮 <b>KALKULATOR LOT & RISK MANAGEMENT</b>\n` +
                 `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                `Account Equity: <b>$${eq.toFixed(2)}</b>\n\n`;
+                `Account Equity: <b>$${eq.toFixed(2)}</b>\n` +
+                `Setting Risiko Akun: <b>${userRisk}%</b> (Ganti: <code>/setrisk</code>)\n\n`;
 
       if (customPips && customPips > 0) {
-        const risk1 = (eq * 0.01) / (customPips * 10);
-        const risk2 = (eq * 0.02) / (customPips * 10);
-        const risk25 = (eq * 0.025) / (customPips * 10);
+        const userLot = userRiskNominal / (customPips * 10);
+        const risk1Lot = (eq * 0.01) / (customPips * 10);
+        const risk2Lot = (eq * 0.02) / (customPips * 10);
 
         msg += `🎯 <b>Stop Loss: ${customPips} Pips</b>\n` +
-               `• Risk 1.0% ($${(eq * 0.01).toFixed(2)}) ➡️ <b>${risk1.toFixed(2)} Lot</b>\n` +
-               `• Risk 2.0% ($${(eq * 0.02).toFixed(2)}) ➡️ <b>${risk2.toFixed(2)} Lot</b>\n` +
-               `• Risk 2.5% ($${(eq * 0.025).toFixed(2)}) ➡️ <b>${risk25.toFixed(2)} Lot</b>\n\n` +
-               `<i>Formula: Lot = Risk ($) / (SL Pips × 10)</i>`;
+               `⭐ <b>Rekomendasi Anda (${userRisk}% = $${userRiskNominal.toFixed(2)}):</b> ➡️ <b>${userLot.toFixed(2)} Lot</b>\n\n` +
+               `<i>Perbandingan toleransi risiko lain:</i>\n` +
+               `• Risk 1.0% ($${(eq * 0.01).toFixed(2)}) ➡️ <b>${risk1Lot.toFixed(2)} Lot</b>\n` +
+               `• Risk 2.0% ($${(eq * 0.02).toFixed(2)}) ➡️ <b>${risk2Lot.toFixed(2)} Lot</b>\n\n` +
+               `<i>Formula: Lot = Nominal Risk ($) / (SL Pips × 10)</i>`;
       } else {
-        const risk25 = (eq * 0.025);
-        msg += `🛡️ <b>Rekomendasi Lot (Risk 2.5% = $${risk25.toFixed(2)}):</b>\n` +
-               `• SL 15 pips ➡️ <b>${(risk25 / 150).toFixed(2)} Lot</b>\n` +
-               `• SL 20 pips ➡️ <b>${(risk25 / 200).toFixed(2)} Lot</b>\n` +
-               `• SL 25 pips ➡️ <b>${(risk25 / 250).toFixed(2)} Lot</b>\n` +
-               `• SL 30 pips ➡️ <b>${(risk25 / 300).toFixed(2)} Lot</b>\n` +
-               `• SL 40 pips ➡️ <b>${(risk25 / 400).toFixed(2)} Lot</b>\n` +
-               `• SL 50 pips ➡️ <b>${(risk25 / 500).toFixed(2)} Lot</b>\n\n` +
-               `<i>Ketik <code>/lot [pips]</code> untuk menghitung SL spesifik (cth: <code>/lot 22</code>).</i>`;
+        msg += `🛡️ <b>Rekomendasi Lot (Setting Risiko ${userRisk}% = $${userRiskNominal.toFixed(2)}):</b>\n` +
+               `• SL 15 pips ➡️ <b>${(userRiskNominal / 150).toFixed(2)} Lot</b>\n` +
+               `• SL 20 pips ➡️ <b>${(userRiskNominal / 200).toFixed(2)} Lot</b>\n` +
+               `• SL 25 pips ➡️ <b>${(userRiskNominal / 250).toFixed(2)} Lot</b>\n` +
+               `• SL 30 pips ➡️ <b>${(userRiskNominal / 300).toFixed(2)} Lot</b>\n` +
+               `• SL 40 pips ➡️ <b>${(userRiskNominal / 400).toFixed(2)} Lot</b>\n` +
+               `• SL 50 pips ➡️ <b>${(userRiskNominal / 500).toFixed(2)} Lot</b>\n\n` +
+               `<i>Ketik <code>/lot [pips]</code> untuk menghitung SL spesifik (cth: <code>/lot 25</code>).\n` +
+               `Ketik <code>/setrisk [persen]</code> untuk mengatur persentase risiko akun.</i>`;
       }
 
       await sendOrEdit(ctx, msg, true);
@@ -1448,6 +1541,215 @@ export function initTelegramBot(db: any) {
   };
   bot.command('lot', handleLotCalc);
   bot.action('cmd_lot', handleLotCalc);
+
+  // COMMAND: /setrisk - Configure risk percentage per trade
+  const handleSetRisk = async (ctx: any, customValue?: number) => {
+    try {
+      const telegramId = ctx.from?.id?.toString();
+      const user = await getActiveUser(telegramId, ctx.from?.username);
+      if (!user) {
+        return ctx.reply('⚠️ Akun belum terhubung. Gunakan <code>/link [username]</code> terlebih dahulu.', { parse_mode: 'HTML' });
+      }
+
+      let targetRisk = customValue;
+      if (targetRisk === undefined) {
+        const text = (ctx.message?.text || '').trim();
+        const parts = text.split(/\s+/);
+        if (parts.length > 1) {
+          const parsed = parseFloat(parts[1].replace('%', ''));
+          if (!isNaN(parsed) && parsed > 0 && parsed <= 50) {
+            targetRisk = parsed;
+          }
+        }
+      }
+
+      if (targetRisk !== undefined && !isNaN(targetRisk) && targetRisk > 0 && targetRisk <= 50) {
+        await ensureTables();
+        await db.execute({
+          sql: "UPDATE users SET default_risk = ? WHERE id = ?",
+          args: [targetRisk, user.id]
+        });
+        user.default_risk = targetRisk;
+
+        const equityData = await getUserEquityData(user.id, user);
+        const eq = equityData.currentEquity;
+        const nominalRisk = (eq * targetRisk) / 100;
+
+        const successMsg =
+          `🛡️ <b>TOLERANSI RISIKO DIPERBARUI!</b>\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `👤 Akun: <b>${user.username}</b>\n` +
+          `⚡ Risiko Baru: <b>${targetRisk}% per trade</b>\n` +
+          `💰 Nominal Risiko (Equity $${eq.toFixed(2)}): <b>$${nominalRisk.toFixed(2)}</b>\n\n` +
+          `💡 <i>Kini setiap kalkulasi <code>/lot</code> dan rekomendasi posisi otomatis menggunakan acuan <b>${targetRisk}%</b> modal Anda.</i>`;
+
+        const customButtons = [
+          [{ text: '🧮 Hitung Lot Sekarang', callback_data: 'cmd_lot' }],
+          [{ text: '📱 Buka Menu Utama', callback_data: 'cmd_menu' }]
+        ];
+        return sendOrEdit(ctx, successMsg, false, customButtons);
+      }
+
+      // Show current risk setting and interactive buttons
+      const currentRisk = (user.default_risk !== undefined && user.default_risk !== null && !isNaN(Number(user.default_risk)))
+        ? Number(user.default_risk)
+        : 2.5;
+
+      const equityData = await getUserEquityData(user.id, user);
+      const eq = equityData.currentEquity;
+      const nominalCurrent = (eq * currentRisk) / 100;
+
+      const msg =
+        `🛡️ <b>PENGATURAN TOLERANSI RISIKO (/setrisk)</b>\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `👤 Akun: <b>${user.username}</b>\n` +
+        `🎯 Toleransi Saat Ini: <b>${currentRisk}% per trade</b>\n` +
+        `💵 Maksimal Loss per Trade: <b>$${nominalCurrent.toFixed(2)}</b> (Equity: $${eq.toFixed(2)})\n\n` +
+        `Pilih persentase risiko cepat di bawah, atau ketik langsung:\n` +
+        `<code>/setrisk [persen]</code> (contoh: <code>/setrisk 1.5</code>)`;
+
+      const customButtons = [
+        [
+          { text: '🛡️ 0.5% (Sangat Aman)', callback_data: 'setrisk_0.5' },
+          { text: '🛡️ 1.0% (Konservatif)', callback_data: 'setrisk_1.0' }
+        ],
+        [
+          { text: '🛡️ 1.5% (Disiplin)', callback_data: 'setrisk_1.5' },
+          { text: '🛡️ 2.0% (Standar Forex)', callback_data: 'setrisk_2.0' }
+        ],
+        [
+          { text: '🛡️ 2.5% (Agresif Terukur)', callback_data: 'setrisk_2.5' },
+          { text: '🛡️ 3.0% (Maksimal)', callback_data: 'setrisk_3.0' }
+        ]
+      ];
+
+      await sendOrEdit(ctx, msg, true, customButtons);
+    } catch (e) {
+      console.error('handleSetRisk error:', e);
+      await ctx.reply('Terjadi kesalahan saat mengatur toleransi risiko.');
+    }
+  };
+
+  bot.command('setrisk', (ctx) => handleSetRisk(ctx));
+  bot.action('cmd_setrisk_menu', (ctx) => handleSetRisk(ctx));
+  bot.action(/^setrisk_(\d+(?:\.\d+)?)$/, async (ctx) => {
+    const val = parseFloat(ctx.match[1]);
+    await handleSetRisk(ctx, val);
+  });
+
+  // COMMAND: /news - Forex & Economic News Calendar
+  const handleNews = async (ctx: any, filterMode: 'high' | 'today' | 'usd' | 'all' = 'high') => {
+    try {
+      const text = (ctx.message?.text || '').trim();
+      const parts = text.split(/\s+/);
+      let mode = filterMode;
+      if (parts.length > 1) {
+        const arg = parts[1].toLowerCase();
+        if (arg === 'today' || arg === 'hariini') mode = 'today';
+        else if (arg === 'usd' || arg === 'gold' || arg === 'xau') mode = 'usd';
+        else if (arg === 'all' || arg === 'semua') mode = 'all';
+        else if (arg === 'high') mode = 'high';
+      }
+
+      const allEvents = await fetchForexNews(filterMode === 'all');
+      if (!allEvents || allEvents.length === 0) {
+        const fallbackMsg =
+          `📰 <b>KALENDER FOREX & JADWAL SESI TRADING</b>\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `⚠️ <i>Data kalender eksternal sedang dalam pembaruan. Jadwal Sesi Utama (WIB):</i>\n\n` +
+          `🌏 <b>Sesi Tokyo (Asia):</b> 07:00 - 16:00 WIB\n` +
+          `🇬🇧 <b>Sesi London (Eropa):</b> 14:00 - 23:00 WIB\n` +
+          `🇺🇸 <b>Sesi New York (US):</b> 19:00 - 04:00 WIB\n\n` +
+          `🔥 <i>Waktu Overlap Volatilitas Tertinggi: 19:00 - 23:00 WIB</i>`;
+        return sendOrEdit(ctx, fallbackMsg, true);
+      }
+
+      const now = new Date();
+      const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(now);
+
+      let filtered = allEvents.filter(ev => {
+        const evDate = new Date(ev.date);
+        const evDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(evDate);
+
+        if (mode === 'today') {
+          return evDateStr === todayStr && (ev.impact === 'High' || ev.impact === 'Medium');
+        } else if (mode === 'usd') {
+          return ev.country.toUpperCase() === 'USD' && (ev.impact === 'High' || ev.impact === 'Medium');
+        } else if (mode === 'all') {
+          return true;
+        } else {
+          return ev.impact === 'High';
+        }
+      });
+
+      let fallbackNote = '';
+      if (filtered.length === 0) {
+        if (mode === 'today') {
+          fallbackNote = '<i>(Event High/Med hari ini sudah selesai atau libur. Menampilkan High-Impact terdekat:)</i>\n';
+          filtered = allEvents.filter(ev => ev.impact === 'High').slice(0, 7);
+        } else {
+          filtered = allEvents.slice(0, 8);
+        }
+      }
+
+      const displayEvents = filtered.slice(0, 8);
+      const modeTitle = mode === 'today' ? '📅 HARI INI' : mode === 'usd' ? '🇺🇸 USD & GOLD IMPACT' : mode === 'all' ? '🌐 SEMUA BERITA' : '🔥 HIGH IMPACT ONLY';
+
+      let msg = `📰 <b>KALENDER FOREX & ECONOMIC NEWS</b>\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `Filter: <b>${modeTitle}</b> | Waktu: <b>WIB (UTC+7)</b>\n` +
+                (fallbackNote ? `${fallbackNote}\n` : '\n');
+
+      displayEvents.forEach(item => {
+        const evDate = new Date(item.date);
+        const dateStr = evDate.toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Asia/Jakarta' });
+        const timeStr = evDate.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' }).replace('.', ':');
+        const flag = getCurrencyFlag(item.country);
+        const badge = getNewsImpactBadge(item.impact);
+
+        msg += `📅 <b>${dateStr}</b> - <b>${timeStr} WIB</b>\n` +
+               `${flag} <b>${item.country}</b> | ${badge}\n` +
+               `📌 <b>${item.title}</b>\n`;
+        if (item.forecast || item.previous) {
+          msg += `   <i>Forecast: ${item.forecast || '-'} | Prev: ${item.previous || '-'}</i>\n`;
+        }
+        msg += `\n`;
+      });
+
+      msg += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+             `<i>⚠️ Waspadai lonjakan spread & slippage menjelang berita High Impact dirilis!</i>`;
+
+      const customButtons = [
+        [
+          { text: '🔥 High Impact', callback_data: 'news_high' },
+          { text: '📅 Hari Ini', callback_data: 'news_today' }
+        ],
+        [
+          { text: '🇺🇸 USD Saja (Gold)', callback_data: 'news_usd' },
+          { text: '🌐 Semua Berita', callback_data: 'news_all' }
+        ],
+        [
+          { text: '🔄 Refresh News', callback_data: 'news_refresh' }
+        ]
+      ];
+
+      await sendOrEdit(ctx, msg, true, customButtons);
+    } catch (err: any) {
+      console.error('handleNews error:', err);
+      await ctx.reply('Terjadi kesalahan memuat berita forex.');
+    }
+  };
+
+  bot.command('news', (ctx) => handleNews(ctx, 'high'));
+  bot.action('cmd_news', (ctx) => handleNews(ctx, 'high'));
+  bot.action('news_high', (ctx) => handleNews(ctx, 'high'));
+  bot.action('news_today', (ctx) => handleNews(ctx, 'today'));
+  bot.action('news_usd', (ctx) => handleNews(ctx, 'usd'));
+  bot.action('news_all', (ctx) => handleNews(ctx, 'all'));
+  bot.action('news_refresh', async (ctx) => {
+    cachedNews = null;
+    await handleNews(ctx, 'high');
+  });
 
   // COMMAND: /deposit & /wd
   bot.command(['deposit', 'topup'], async (ctx) => {
@@ -1881,6 +2183,7 @@ export function initTelegramBot(db: any) {
       [Markup.button.callback('📝 Jurnal Trade Baru', 'cmd_start_journal'), Markup.button.callback('💰 Cek Saldo & Equity', 'cmd_saldo')],
       [Markup.button.callback('📊 Hari Ini (Today)', 'cmd_today'), Markup.button.callback('📈 7 Hari (Weekly)', 'cmd_weekly')],
       [Markup.button.callback('🧮 Kalkulator Lot', 'cmd_lot'), Markup.button.callback('⏳ Trade Running', 'cmd_running')],
+      [Markup.button.callback('📰 Berita Pasar (News)', 'cmd_news'), Markup.button.callback('🛡️ Set Toleransi Risiko', 'cmd_setrisk_menu')],
       [Markup.button.callback('👥 Kelola Akun', 'cmd_accounts'), Markup.button.callback('💡 Bantuan & Panduan', 'cmd_help')]
     ]);
 
@@ -1909,24 +2212,27 @@ export function initTelegramBot(db: any) {
                     `• <code>/running</code> - Lihat daftar trade terbuka / pending\n` +
                     `• <code>/close [id] [win/loss] [pnl]</code> - Tutup trade terbuka\n` +
                     `• <code>/undo</code> - Batalkan/hapus trade terakhir jika salah input\n\n` +
-                    `<b>2. KEUANGAN & PERFORMA:</b>\n` +
+                    `<b>2. TOOLS & RISK MANAGEMENT:</b>\n` +
+                    `• <code>/news</code> - Kalender ekonomi Forex & rilis berita High-Impact\n` +
+                    `  <i>Opsi:</i> <code>/news today</code>, <code>/news usd</code>, <code>/news high</code>, <code>/news all</code>\n` +
+                    `• <code>/setrisk [persen]</code> - Atur toleransi risiko per trade (cth: <code>/setrisk 1.5</code>)\n` +
+                    `• <code>/lot [pips]</code> - Hitung lot optimal berdasarkan toleransi risiko akun\n\n` +
+                    `<b>3. KEUANGAN & PERFORMA:</b>\n` +
                     `• <code>/saldo</code> - Cek modal awal, penarikan & current equity\n` +
                     `• <code>/today</code> - Statistik trade hari ini (Win rate & P/L)\n` +
                     `• <code>/weekly</code> - Statistik performa 7 hari terakhir\n` +
-                    `• <code>/lot [pips]</code> - Hitung lot optimal berdasarkan risiko\n` +
                     `• <code>/deposit [jumlah]</code> - Catat deposit saldo\n` +
                     `• <code>/wd [jumlah]</code> - Catat penarikan keuntungan\n` +
                     `• <code>/setbalance [jumlah]</code> - Setel modal awal\n\n` +
-                    `<b>3. MANAJEMEN AKUN:</b>\n` +
+                    `<b>4. MANAJEMEN AKUN:</b>\n` +
                     `• <code>/menu</code> - Buka Control Panel navigasi utama\n` +
                     `• <code>/accounts</code> - Daftar akun multi-user\n` +
                     `• <code>/switch [username]</code> - Ganti akun aktif\n` +
                     `• <code>/link [username]</code> - Tautkan akun Telegram\n\n` +
-                    `<b>4. SCREENSHOT & GAMBAR ENTRY:</b>\n` +
-                    `• <b>Kirim Foto + Caption:</b> Kirim gambar chart dengan caption:\n` +
-                    `  <code>XAUUSD BUY 0.10 +150 WIN Setup Retest</code>\n` +
+                    `<b>5. SCREENSHOT & GAMBAR ENTRY:</b>\n` +
+                    `• <b>Kirim Foto + Caption:</b> Kirim chart dengan caption: <code>XAUUSD BUY 0.10 +150 WIN Setup Retest</code>\n` +
                     `• <b>Kirim Foto Langsung:</b> Kirim foto tanpa caption, lalu klik tombol <i>[Catat Jurnal dengan Foto Ini]</i>\n` +
-                    `• <b>Wizard /jurnal:</b> Di langkah akhir wizard, kirim foto chart atau klik Lewati\n` +
+                    `• <b>Wizard /jurnal:</b> Di langkah akhir wizard, kirim foto chart Anda\n` +
                     `• <b>TradingView Link:</b> Sertakan link snapshot di /quick (cth: <code>https://tradingview.com/x/...</code>)`;
 
     await sendOrEdit(ctx, helpMsg, true);

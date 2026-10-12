@@ -46,9 +46,11 @@ export default function History({ trades, onTradeUpdated, user }: { trades: Trad
     // If Gold, 1 point is $100 per lot.
     let pipValue = 10; 
     if (trade.pair.toUpperCase().includes('XAU') || trade.pair.toUpperCase().includes('GOLD')) {
-      pipValue = 1; // Sometimes 10, depends on broker. We'll use 1 for rough points
+      pipValue = 10; // Standard: 10 USD per standard lot for 1 pip (0.10 price move, $1.00 move = 10 pips)
     } else if (trade.pair.toUpperCase().includes('JPY')) {
-      pipValue = 8; // Roughly $8-9 per lot
+      pipValue = 8.5; // Roughly $8.50 per lot
+    } else if (trade.pair.toUpperCase().includes('BTC') || trade.pair.toUpperCase().includes('ETH')) {
+      pipValue = 1;
     }
     const lots = trade.position_size || 0.01;
     // Calculate Pips simply by: (P/L) / (Lots * PipValue)

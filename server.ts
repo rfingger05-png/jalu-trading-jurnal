@@ -201,6 +201,10 @@ async function initDb() {
       )
     `);
 
+    try {
+      await db.execute("ALTER TABLE users ADD COLUMN default_risk REAL DEFAULT 2.5");
+    } catch (_) {}
+
     await db.execute(`
       CREATE TABLE IF NOT EXISTS transactions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -513,7 +517,7 @@ app.post("/api/auth/login", async (req, res) => {
 app.get("/api/auth/me", authMiddleware, async (req: any, res) => {
   try {
     const userRes = await db.execute({
-      sql: "SELECT id, username, role, current_mode, currency, prop_firm_enabled, prop_firm_balance, prop_firm_daily_dd, prop_firm_max_dd, prop_firm_target, prop_firm_payout_total, initial_balance, myfxbook_session, telegram_id, telegram_tag, coins, active_character_id FROM users WHERE id = ?",
+      sql: "SELECT id, username, role, current_mode, currency, default_risk, prop_firm_enabled, prop_firm_balance, prop_firm_daily_dd, prop_firm_max_dd, prop_firm_target, prop_firm_payout_total, initial_balance, myfxbook_session, telegram_id, telegram_tag, coins, active_character_id FROM users WHERE id = ?",
       args: [req.user.id]
     });
     if (userRes.rows.length === 0) return res.status(401).json({ error: "Unauthorized" });
@@ -524,6 +528,7 @@ app.get("/api/auth/me", authMiddleware, async (req: any, res) => {
       role: user.role, 
       current_mode: user.current_mode || 'backtest',
       currency: user.currency || 'USD',
+      default_risk: user.default_risk !== undefined && user.default_risk !== null ? Number(user.default_risk) : 2.5,
       prop_firm_enabled: Boolean(user.prop_firm_enabled),
       prop_firm_balance: user.prop_firm_balance || 1000,
       initial_balance: user.initial_balance,

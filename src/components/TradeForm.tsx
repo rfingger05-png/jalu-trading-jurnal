@@ -95,7 +95,10 @@ export default function TradeForm({ onTradeAdded, currentEquity = 10000, user }:
     if (realizedPl !== null && realizedPl !== undefined && !isNaN(Number(realizedPl))) {
       const plNum = Number(realizedPl);
       const sz = positionSize || 0.1;
-      return Math.round(plNum / (sz * (mult === 10000 ? 10 : 1)));
+      let pipVal = 10;
+      if (pUpper.includes('BTC') || pUpper.includes('ETH')) pipVal = 1;
+      else if (pUpper.includes('JPY')) pipVal = 8.5;
+      return Math.round(plNum / (sz * pipVal));
     }
     return 0;
   }, [pair, entryPrice, sl, tp, result, realizedPl, positionSize]);
