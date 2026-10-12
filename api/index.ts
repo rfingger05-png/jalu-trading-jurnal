@@ -1,63 +1,52 @@
 import app from "../server";
 
-export default async function handler(req: any, res: any) {
+export default function handler(req: any, res: any) {
   // 1. Safe Body Normalization for Vercel Serverless
   if (typeof req.body === "string") {
     try {
       req.body = JSON.parse(req.body);
     } catch {}
-    req._body = true;
+    (req as any)._body = true;
   } else if (Buffer.isBuffer(req.body)) {
     try {
       req.body = JSON.parse(req.body.toString("utf8"));
     } catch {}
-    req._body = true;
+    (req as any)._body = true;
   } else if (req.body !== undefined && req.body !== null && typeof req.body === "object") {
-    req._body = true;
-  } else if (!req.body && (req.method === "POST" || req.method === "PUT" || req.method === "PATCH")) {
-    try {
-      const chunks: Buffer[] = [];
-      for await (const chunk of req) {
-        chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
-      }
-      if (chunks.length > 0) {
-        const raw = Buffer.concat(chunks).toString("utf8");
-        try {
-          req.body = JSON.parse(raw);
-        } catch {
-          req.body = raw;
-        }
-      } else {
-        req.body = {};
-      }
-      req._body = true;
-    } catch {
-      req.body = req.body || {};
-      req._body = true;
-    }
+    (req as any)._body = true;
   }
 
-  // 2. Safe URL Normalization (do NOT use x-matched-path which contains the internal lambda file path /api/index)
-  const candidateUrl =
+  // 2. Safe URL Normalization
+  let targetUrl =
     req.headers["x-forwarded-url"] ||
     req.headers["x-vercel-original-url"] ||
     req.headers["x-real-path"] ||
-    req.headers["x-original-url"] ||
     req.url;
 
-  if (candidateUrl && typeof candidateUrl === "string") {
+  // Handle rewrite capture groups if targetUrl was rewritten to /api/index
+  if (
+    typeof targetUrl === "string" &&
+    (targetUrl.startsWith("/api/index") || targetUrl === "/api" || targetUrl === "/api/")
+  ) {
+    if (req.query && (req.query["0"] || req.query.path || req.query.slug)) {
+      const subpath = req.query["0"] || req.query.path || req.query.slug;
+      targetUrl = `/api/${Array.isArray(subpath) ? subpath.join("/") : subpath}`;
+    }
+  }
+
+  if (targetUrl && typeof targetUrl === "string") {
     try {
-      const parsed = new URL(candidateUrl, "https://dummy.local");
+      const parsed = new URL(targetUrl, "https://dummy.local");
       let pathname = parsed.pathname;
       if (!pathname.startsWith("/api")) {
         pathname = "/api" + (pathname.startsWith("/") ? pathname : "/" + pathname);
       }
       req.url = pathname + (parsed.search || "");
     } catch {
-      if (!candidateUrl.startsWith("/api")) {
-        req.url = "/api" + (candidateUrl.startsWith("/") ? candidateUrl : "/" + candidateUrl);
+      if (!targetUrl.startsWith("/api")) {
+        req.url = "/api" + (targetUrl.startsWith("/") ? targetUrl : "/" + targetUrl);
       } else {
-        req.url = candidateUrl;
+        req.url = targetUrl;
       }
     }
   }
@@ -66,5 +55,23 @@ export default async function handler(req: any, res: any) {
     req.url = "/api" + (req.url.startsWith("/") ? req.url : "/" + req.url);
   }
 
-  return app(req, res);
+  // 3. Keep Lambda alive until Express finishes sending the response
+  return new Promise((resolve, reject) => {
+    res.on("finish", resolve);
+    res.on("close", resolve);
+    res.on("error", (err: any) => {
+      console.error("Vercel response stream error:", err);
+      reject(err);
+    });
+
+    try {
+      app(req, res);
+    } catch (err: any) {
+      console.error("Vercel express execution error:", err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: err?.message || "Internal Server Error" });
+      }
+      resolve(undefined);
+    }
+  });
 }

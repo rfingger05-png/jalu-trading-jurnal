@@ -45,10 +45,11 @@ export default function Auth({ onLogin }: { onLogin: (user: User) => void }) {
       });
 
       let data: any = null;
+      let rawText = '';
       try {
-        const text = await res.text();
-        if (text) {
-          data = JSON.parse(text);
+        rawText = await res.text();
+        if (rawText) {
+          data = JSON.parse(rawText);
         }
       } catch (parseErr) {
         // Not a JSON response
@@ -58,13 +59,19 @@ export default function Auth({ onLogin }: { onLogin: (user: User) => void }) {
         if (data?.error) {
           throw new Error(data.error);
         }
+        if (data?.message) {
+          throw new Error(data.message);
+        }
         if (res.status === 401) {
           throw new Error('Username atau password tidak sesuai.');
         }
         if (res.status === 404) {
-          throw new Error('Layanan autentikasi tidak ditemukan (404).');
+          throw new Error('Layanan endpoint autentikasi tidak ditemukan (404).');
         }
-        throw new Error('Gagal menghubungi server. Silakan coba lagi.');
+        if (rawText && rawText.length < 120 && !rawText.includes('<html')) {
+          throw new Error(rawText);
+        }
+        throw new Error(`Koneksi server bermasalah (${res.status} ${res.statusText || 'Error'}). Silakan coba sesaat lagi.`);
       }
 
       if (!data || !data.user) {
