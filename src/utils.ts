@@ -9,7 +9,7 @@ export function formatCurrency(val: number | null | undefined, currency: string 
   if (currency === 'IDR') symbol = 'Rp ';
   if (currency === 'EUR') symbol = '€';
   if (currency === 'GBP') symbol = '£';
-  if (currency === 'USC' || currency === 'Cent') symbol = '¢';
+  if (currency === 'USC' || currency === 'Cent' || currency === 'NANO') symbol = '¢';
   if (currency === 'JPY') symbol = '¥';
   
   if (currency === 'IDR') {

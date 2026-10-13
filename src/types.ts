@@ -27,7 +27,7 @@ export type User = {
   username: string;
   role: 'admin' | 'user';
   current_mode: 'backtest' | 'demo';
-  currency: 'USD' | 'USC' | 'IDR';
+  currency: 'USD' | 'USC' | 'NANO' | 'IDR';
   prop_firm_enabled?: boolean;
   prop_firm_balance?: number;
   initial_balance?: number | null;

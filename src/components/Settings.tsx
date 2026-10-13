@@ -269,16 +269,32 @@ export default function Settings({ user, onUserUpdate, onLocalUpdate, onModeChan
            <div className="flex flex-col gap-4 border-t border-slate-100 dark:border-neutral-800 pt-8 mt-4">
               <h3 className="text-xs font-bold uppercase tracking-widest text-slate-600 dark:text-neutral-400">Base Currency</h3>
               <div className="flex flex-col gap-4 max-w-sm">
-                <select 
-                  value={currency} 
-                  onChange={(e) => setCurrency(e.target.value)}
-                  className="border border-slate-300 dark:border-neutral-700 p-2 text-sm focus:outline-none focus:border-black dark:border-neutral-500 rounded-sm bg-slate-50 dark:bg-neutral-950"
-                >
-                  <option value="USD">USD ($)</option>
-                  <option value="USC">USC (¢)</option>
-                  <option value="IDR">IDR (Rp)</option>
-                </select>
-                
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs text-slate-500 dark:text-neutral-500 mb-1">
+                    Pilih tipe akun & mata uang trading Anda. Akun Nano memiliki pip value 1/10 dari akun Cent/USD.
+                  </span>
+                  <select 
+                    value={currency} 
+                    onChange={(e) => setCurrency(e.target.value)}
+                    className="border border-slate-300 dark:border-neutral-700 p-2 text-sm focus:outline-none focus:border-black dark:border-neutral-500 rounded-sm bg-slate-50 dark:bg-neutral-950"
+                  >
+                    <option value="USD">USD ($) - Akun Standard (1 pip/lot = $10)</option>
+                    <option value="USC">USC (¢) - Akun Cent (1 pip/lot = 10¢)</option>
+                    <option value="NANO">NANO (¢) - Akun Nano (1 pip/lot = 1¢ | 0.04 lot 100 pips = 4¢)</option>
+                    <option value="IDR">IDR (Rp) - Akun Rupiah</option>
+                  </select>
+                  {currency === 'NANO' && (
+                    <div className="mt-2 p-2.5 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 rounded text-[11px] text-amber-800 dark:text-amber-300">
+                      💡 <b>Mode Akun Nano Aktif:</b> Perhitungan lot dan pips otomatis disesuaikan (0.04 lot × 100 pips = 4¢). Formula: <code>Lot = Risk / (SL × 1)</code> dan <code>Pips = P/L / (Lot × 1)</code>.
+                    </div>
+                  )}
+                  {currency === 'USC' && (
+                    <div className="mt-2 p-2.5 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/60 rounded text-[11px] text-blue-800 dark:text-blue-300">
+                      💡 <b>Mode Akun Cent Aktif:</b> Saldo dan P/L dalam Cent (USC). Transaksi 0.04 lot × 100 pips = 40¢. Formula: <code>Lot = Risk / (SL × 10)</code>.
+                    </div>
+                  )}
+                </div>
+                  
                 <div className="flex items-center gap-3">
                   <button 
                     onClick={saveCurrency}

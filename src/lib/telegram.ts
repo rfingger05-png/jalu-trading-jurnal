@@ -35,7 +35,7 @@ const sendOrEdit = async (ctx: any, msg: string, useBackButton: boolean = false,
 };
 
 // Calculate pips for trade accurately (Gold: 1 point / $1.00 = 10 pips, 1 pip = 0.10 price move = $10 / standard lot)
-export function calculatePips(pair: string, entry: number, exitPrice: number, pl: number, lot: number, isWin: boolean): number {
+export function calculatePips(pair: string, entry: number, exitPrice: number, pl: number, lot: number, isWin: boolean, isNano: boolean = false): number {
   const p = (pair || 'XAUUSD').toUpperCase();
   const safeLot = lot > 0 ? lot : 0.1;
 
@@ -56,14 +56,16 @@ export function calculatePips(pair: string, entry: number, exitPrice: number, pl
   // - Gold (XAUUSD): 1 pip = 0.10 move = $10 per 1.00 standard lot (100 oz contract)
   // - Major Forex (EURUSD, GBPUSD, etc.): 1 pip = 0.0001 = $10 per 1.00 standard lot
   // - JPY pairs: 1 pip = 0.01 = ~$8.5 - $10 per 1.00 lot
+  // - Nano account: Pip value is 1/10th of standard / cent (1¢ / $0.01 per lot)
   // Formula: Pips = P/L / (Lot Size * Pip Value per 1.00 Lot)
-  // Example: On Gold, $100 profit with 0.10 lot => 100 / (0.10 * 10) = 100 pips! (Fixes 1000 pips bug)
+  // Example: On Nano, 4 cent profit with 0.04 lot => 4 / (0.04 * 1) = 100 pips!
+  // Example: On Standard/Cent, 40 profit with 0.04 lot => 40 / (0.04 * 10) = 100 pips!
   if (pl !== 0 && safeLot > 0) {
-    let pipValuePerLot = 10; // Standard $10 per lot for 1 pip
+    let pipValuePerLot = isNano ? 1 : 10; // Nano: 1¢ per lot | Standard/Cent: $10 / 10¢ per lot
     if (p.includes('BTC') || p.includes('ETH')) {
-      pipValuePerLot = 1;
+      pipValuePerLot = isNano ? 0.1 : 1;
     } else if (p.includes('JPY')) {
-      pipValuePerLot = 8.5;
+      pipValuePerLot = isNano ? 0.85 : 8.5;
     }
 
     const pipWorth = safeLot * pipValuePerLot;
@@ -303,6 +305,7 @@ export function initTelegramBot(db: any) {
       { command: 'lot', description: '🧮 Hitung lot otomatis berdasarkan toleransi risiko' },
       { command: 'news', description: '📰 Kalender ekonomi Forex & berita pasar high-impact' },
       { command: 'setrisk', description: '🛡️ Atur toleransi risiko per trade: /setrisk [persen]' },
+      { command: 'setaccount', description: '🏷️ Pilih tipe akun: Standard ($), Cent (¢), atau Nano (¢)' },
       { command: 'deposit', description: '📥 Catat deposit saldo: /deposit [jumlah]' },
       { command: 'wd', description: '📤 Catat penarikan keuntungan: /wd [jumlah]' },
       { command: 'undo', description: '↩️ Batalkan/hapus trade terakhir' },
@@ -534,7 +537,9 @@ export function initTelegramBot(db: any) {
       const isWin = (t.result || '').toUpperCase() === 'WIN';
       if (isWin) wins++;
 
-      const pips = calculatePips(t.pair || 'XAUUSD', t.entry_price || 0, t.tp || 0, pl, t.position_size || 0.1, isWin);
+      const pips = (t.pips !== null && t.pips !== undefined && !isNaN(Number(t.pips)))
+        ? Number(t.pips)
+        : calculatePips(t.pair || 'XAUUSD', t.entry_price || 0, t.tp || 0, pl, t.position_size || 0.1, isWin, userData?.currency === 'NANO');
       totalPips += pips;
       if (pips > 0) winningPips += pips;
     });
@@ -960,7 +965,7 @@ export function initTelegramBot(db: any) {
       const mode = user.current_mode || 'backtest';
       const isWin = result.toUpperCase() === 'WIN';
 
-      const pips = calculatePips(pair, entry, tp, pnl, lot, isWin);
+      const pips = calculatePips(pair, entry, tp, pnl, lot, isWin, user?.currency === 'NANO');
 
       const insertRes = await db.execute({
         sql: `INSERT INTO trades (
@@ -1153,7 +1158,7 @@ export function initTelegramBot(db: any) {
       const setupName = notesArr.length > 0 ? notesArr.join(' ') : 'Quick Telegram Trade';
       const mode = user.current_mode || 'backtest';
       const isWin = result === 'WIN';
-      const pips = calculatePips(pair, entry, tp, pnl, lot, isWin);
+      const pips = calculatePips(pair, entry, tp, pnl, lot, isWin, user?.currency === 'NANO');
 
       const ins = await db.execute({
         sql: `INSERT INTO trades (
@@ -1317,7 +1322,7 @@ export function initTelegramBot(db: any) {
 
       const trade = tradeRes.rows[0] as any;
       const isWin = resStatus === 'WIN';
-      const pips = calculatePips(trade.pair, trade.entry_price || 0, trade.tp || 0, pnl, trade.position_size || 0.01, isWin);
+      const pips = calculatePips(trade.pair, trade.entry_price || 0, trade.tp || 0, pnl, trade.position_size || 0.01, isWin, user?.currency === 'NANO');
 
       await db.execute({
         sql: "UPDATE trades SET result = ?, realized_pl = ?, pips = ? WHERE id = ?",
@@ -1503,37 +1508,60 @@ export function initTelegramBot(db: any) {
         ? Number(user.default_risk)
         : 2.5;
 
+      const isNano = user?.currency === 'NANO';
+      const isCent = user?.currency === 'USC';
+      const pipMultiplier = isNano ? 1 : 10;
+      const unitSym = isNano ? '¢' : (isCent ? '¢' : '$');
+      const accountTypeName = isNano ? 'Nano (1 pip = 1¢/lot)' : (isCent ? 'Cent (1 pip = 10¢/lot)' : 'Standard (1 pip = $10/lot)');
+
       const userRiskNominal = (eq * (userRisk / 100));
 
       let msg = `🧮 <b>KALKULATOR LOT & RISK MANAGEMENT</b>\n` +
                 `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                `Account Equity: <b>$${eq.toFixed(2)}</b>\n` +
-                `Setting Risiko Akun: <b>${userRisk}%</b> (Ganti: <code>/setrisk</code>)\n\n`;
+                `👤 Akun: <b>${user?.username || 'Trader'}</b>\n` +
+                `🏷️ Tipe Akun: <b>${accountTypeName}</b>\n` +
+                `💰 Equity: <b>${unitSym}${eq.toFixed(2)}</b>\n` +
+                `🛡️ Setting Risiko: <b>${userRisk}%</b> (Ganti: <code>/setrisk</code>)\n` +
+                `💡 Pip Value: <b>${isNano ? '1¢ ($0.01)' : isCent ? '10¢ ($0.10)' : '$10.00'} / 1.00 Lot</b>\n\n`;
 
       if (customPips && customPips > 0) {
-        const userLot = userRiskNominal / (customPips * 10);
-        const risk1Lot = (eq * 0.01) / (customPips * 10);
-        const risk2Lot = (eq * 0.02) / (customPips * 10);
+        const userLot = userRiskNominal / (customPips * pipMultiplier);
+        const risk1Lot = (eq * 0.01) / (customPips * pipMultiplier);
+        const risk2Lot = (eq * 0.02) / (customPips * pipMultiplier);
 
         msg += `🎯 <b>Stop Loss: ${customPips} Pips</b>\n` +
-               `⭐ <b>Rekomendasi Anda (${userRisk}% = $${userRiskNominal.toFixed(2)}):</b> ➡️ <b>${userLot.toFixed(2)} Lot</b>\n\n` +
+               `⭐ <b>Rekomendasi Anda (${userRisk}% = ${unitSym}${userRiskNominal.toFixed(2)}):</b> ➡️ <b>${userLot.toFixed(2)} Lot</b>\n\n` +
                `<i>Perbandingan toleransi risiko lain:</i>\n` +
-               `• Risk 1.0% ($${(eq * 0.01).toFixed(2)}) ➡️ <b>${risk1Lot.toFixed(2)} Lot</b>\n` +
-               `• Risk 2.0% ($${(eq * 0.02).toFixed(2)}) ➡️ <b>${risk2Lot.toFixed(2)} Lot</b>\n\n` +
-               `<i>Formula: Lot = Nominal Risk ($) / (SL Pips × 10)</i>`;
+               `• Risk 1.0% (${unitSym}${(eq * 0.01).toFixed(2)}) ➡️ <b>${risk1Lot.toFixed(2)} Lot</b>\n` +
+               `• Risk 2.0% (${unitSym}${(eq * 0.02).toFixed(2)}) ➡️ <b>${risk2Lot.toFixed(2)} Lot</b>\n\n` +
+               `<i>Formula: Lot = Nominal Risk / (SL Pips × ${pipMultiplier})</i>\n` +
+               `<i>(0.04 Lot × 100 Pips = ${isNano ? '4¢' : isCent ? '40¢' : '$40'})</i>`;
       } else {
-        msg += `🛡️ <b>Rekomendasi Lot (Setting Risiko ${userRisk}% = $${userRiskNominal.toFixed(2)}):</b>\n` +
-               `• SL 15 pips ➡️ <b>${(userRiskNominal / 150).toFixed(2)} Lot</b>\n` +
-               `• SL 20 pips ➡️ <b>${(userRiskNominal / 200).toFixed(2)} Lot</b>\n` +
-               `• SL 25 pips ➡️ <b>${(userRiskNominal / 250).toFixed(2)} Lot</b>\n` +
-               `• SL 30 pips ➡️ <b>${(userRiskNominal / 300).toFixed(2)} Lot</b>\n` +
-               `• SL 40 pips ➡️ <b>${(userRiskNominal / 400).toFixed(2)} Lot</b>\n` +
-               `• SL 50 pips ➡️ <b>${(userRiskNominal / 500).toFixed(2)} Lot</b>\n\n` +
-               `<i>Ketik <code>/lot [pips]</code> untuk menghitung SL spesifik (cth: <code>/lot 25</code>).\n` +
-               `Ketik <code>/setrisk [persen]</code> untuk mengatur persentase risiko akun.</i>`;
+        msg += `🛡️ <b>Rekomendasi Lot (Setting Risiko ${userRisk}% = ${unitSym}${userRiskNominal.toFixed(2)}):</b>\n` +
+               `• SL 15 pips ➡️ <b>${(userRiskNominal / (15 * pipMultiplier)).toFixed(2)} Lot</b>\n` +
+               `• SL 20 pips ➡️ <b>${(userRiskNominal / (20 * pipMultiplier)).toFixed(2)} Lot</b>\n` +
+               `• SL 25 pips ➡️ <b>${(userRiskNominal / (25 * pipMultiplier)).toFixed(2)} Lot</b>\n` +
+               `• SL 30 pips ➡️ <b>${(userRiskNominal / (30 * pipMultiplier)).toFixed(2)} Lot</b>\n` +
+               `• SL 40 pips ➡️ <b>${(userRiskNominal / (40 * pipMultiplier)).toFixed(2)} Lot</b>\n` +
+               `• SL 50 pips ➡️ <b>${(userRiskNominal / (50 * pipMultiplier)).toFixed(2)} Lot</b>\n\n` +
+               `<i>💡 Ketik <code>/lot [pips]</code> untuk menghitung SL spesifik (cth: <code>/lot 25</code>).\n` +
+               `Ketik <code>/setrisk [persen]</code> untuk mengatur persentase risiko.\n` +
+               `Ketik <code>/setaccount [nano/cent/standard]</code> untuk ganti tipe akun.</i>`;
       }
 
-      await sendOrEdit(ctx, msg, true);
+      const buttons = [
+        [
+          { text: isNano ? '✅ Nano (1¢)' : 'Ganti ke Nano (1¢)', callback_data: 'cmd_set_account_nano' },
+          { text: isCent ? '✅ Cent (10¢)' : 'Ganti ke Cent (10¢)', callback_data: 'cmd_set_account_cent' },
+          { text: (!isNano && !isCent) ? '✅ Standard ($10)' : 'Ganti Standard ($10)', callback_data: 'cmd_set_account_standard' }
+        ],
+        [
+          { text: '🛡️ Atur Risiko (/setrisk)', callback_data: 'cmd_setrisk' },
+          { text: '📱 Menu Utama', callback_data: 'cmd_menu' }
+        ]
+      ];
+
+      await sendOrEdit(ctx, msg, false, buttons);
     } catch (e) {
       console.error(e);
       await ctx.reply('Terjadi kesalahan kalkulator lot.');
@@ -1541,6 +1569,93 @@ export function initTelegramBot(db: any) {
   };
   bot.command('lot', handleLotCalc);
   bot.action('cmd_lot', handleLotCalc);
+
+  // COMMAND: /setaccount - Configure account type (Standard, Cent, Nano)
+  const handleSetAccount = async (ctx: any, targetType?: string) => {
+    try {
+      const telegramId = ctx.from?.id?.toString();
+      const user = await getActiveUser(telegramId, ctx.from?.username);
+      if (!user) {
+        return ctx.reply('⚠️ Akun belum terhubung. Gunakan <code>/link [username]</code> terlebih dahulu.', { parse_mode: 'HTML' });
+      }
+
+      let chosen = targetType;
+      if (!chosen) {
+        const text = (ctx.message?.text || '').trim().toLowerCase();
+        const parts = text.split(/\s+/);
+        if (parts.length > 1) {
+          const arg = parts[1];
+          if (arg.includes('nano')) chosen = 'NANO';
+          else if (arg.includes('cent') || arg.includes('usc')) chosen = 'USC';
+          else if (arg.includes('usd') || arg.includes('standard')) chosen = 'USD';
+        }
+      }
+
+      if (chosen && ['NANO', 'USC', 'USD'].includes(chosen)) {
+        await ensureTables();
+        await db.execute({
+          sql: "UPDATE users SET currency = ? WHERE id = ?",
+          args: [chosen, user.id]
+        });
+        user.currency = chosen;
+
+        const isNano = chosen === 'NANO';
+        const isCent = chosen === 'USC';
+        const label = isNano 
+          ? 'Nano (1 pip = 1¢ | 0.04 lot 100 pips = 4¢)' 
+          : isCent 
+          ? 'Cent (1 pip = 10¢ | 0.04 lot 100 pips = 40¢)' 
+          : 'Standard (1 pip = $10 | 0.04 lot 100 pips = $40)';
+
+        const successMsg =
+          `🏷️ <b>TIPE AKUN BERHASIL DIPERBARUI!</b>\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `👤 Akun: <b>${user.username}</b>\n` +
+          `⚡ Tipe Baru: <b>${label}</b>\n\n` +
+          `💡 <i>Kini kalkulasi lot <code>/lot</code> dan penghitungan pips trade otomatis menggunakan multiplier akun ${chosen}!</i>`;
+
+        const btns = [
+          [{ text: '🧮 Hitung Lot Sekarang', callback_data: 'cmd_lot' }],
+          [{ text: '📱 Buka Menu Utama', callback_data: 'cmd_menu' }]
+        ];
+        return sendOrEdit(ctx, successMsg, false, btns);
+      }
+
+      // Show interactive selection
+      const current = user.currency || 'USD';
+      const currentLabel = current === 'NANO' ? 'Nano (1¢/lot)' : current === 'USC' ? 'Cent (10¢/lot)' : 'Standard ($10/lot)';
+      const msg =
+        `🏷️ <b>PILIH TIPE AKUN TRADING</b>\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `👤 Akun: <b>${user.username}</b>\n` +
+        `Status Saat Ini: <b>${currentLabel}</b>\n\n` +
+        `Pilih tipe akun Anda di bawah ini agar rumus lot & pips akurat:\n` +
+        `• <b>Standard (USD):</b> 1 lot = $10/pip | 0.04 lot 100 pips = $40.00\n` +
+        `• <b>Cent (USC):</b> 1 lot = 10¢/pip | 0.04 lot 100 pips = 40¢\n` +
+        `• <b>Nano:</b> 1 lot = 1¢/pip | 0.04 lot 100 pips = 4¢\n\n` +
+        `<i>Atau ketik <code>/setaccount nano</code>, <code>/setaccount cent</code>, atau <code>/setaccount standard</code></i>`;
+
+      const btns = [
+        [
+          { text: current === 'NANO' ? '✅ Nano (1¢)' : 'Nano (1¢)', callback_data: 'cmd_set_account_nano' },
+          { text: current === 'USC' ? '✅ Cent (10¢)' : 'Cent (10¢)', callback_data: 'cmd_set_account_cent' },
+          { text: (current !== 'NANO' && current !== 'USC') ? '✅ Standard ($10)' : 'Standard ($10)', callback_data: 'cmd_set_account_standard' }
+        ],
+        [{ text: '📱 Kembali ke Menu', callback_data: 'cmd_menu' }]
+      ];
+      return sendOrEdit(ctx, msg, false, btns);
+    } catch (e) {
+      console.error(e);
+      await ctx.reply('Terjadi kesalahan saat mengatur tipe akun.');
+    }
+  };
+
+  bot.command('setaccount', (ctx: any) => handleSetAccount(ctx));
+  bot.command('accounttype', (ctx: any) => handleSetAccount(ctx));
+  bot.action('cmd_setaccount', (ctx: any) => handleSetAccount(ctx));
+  bot.action('cmd_set_account_nano', (ctx: any) => handleSetAccount(ctx, 'NANO'));
+  bot.action('cmd_set_account_cent', (ctx: any) => handleSetAccount(ctx, 'USC'));
+  bot.action('cmd_set_account_standard', (ctx: any) => handleSetAccount(ctx, 'USD'));
 
   // COMMAND: /setrisk - Configure risk percentage per trade
   const handleSetRisk = async (ctx: any, customValue?: number) => {
@@ -2171,8 +2286,13 @@ export function initTelegramBot(db: any) {
 
     if (user) {
       const s = await getUserEquityData(user.id, user);
+      const isNano = user.currency === 'NANO';
+      const isCent = user.currency === 'USC';
+      const typeLabel = isNano ? 'Nano (1¢/lot)' : isCent ? 'Cent (10¢/lot)' : 'Standard ($10/lot)';
+      const unitSym = isNano ? '¢' : isCent ? '¢' : '$';
       msg += `👤 Akun: <code>${user.username}</code> | Mode: <code>${user.current_mode || 'backtest'}</code>\n` +
-             `💰 Equity: <b>$${s.currentEquity.toFixed(2)}</b> | WR: <b>${s.winRate}%</b>\n\n`;
+             `🏷️ Tipe Akun: <b>${typeLabel}</b> | WR: <b>${s.winRate}%</b>\n` +
+             `💰 Equity: <b>${unitSym}${s.currentEquity.toFixed(2)}</b>\n\n`;
     } else {
       msg += `⚠️ Akun belum terhubung. Klik tombol hubungkan akun di bawah.\n\n`;
     }
@@ -2184,7 +2304,8 @@ export function initTelegramBot(db: any) {
       [Markup.button.callback('📊 Hari Ini (Today)', 'cmd_today'), Markup.button.callback('📈 7 Hari (Weekly)', 'cmd_weekly')],
       [Markup.button.callback('🧮 Kalkulator Lot', 'cmd_lot'), Markup.button.callback('⏳ Trade Running', 'cmd_running')],
       [Markup.button.callback('📰 Berita Pasar (News)', 'cmd_news'), Markup.button.callback('🛡️ Set Toleransi Risiko', 'cmd_setrisk_menu')],
-      [Markup.button.callback('👥 Kelola Akun', 'cmd_accounts'), Markup.button.callback('💡 Bantuan & Panduan', 'cmd_help')]
+      [Markup.button.callback('🏷️ Ganti Tipe Akun', 'cmd_setaccount'), Markup.button.callback('👥 Kelola Akun', 'cmd_accounts')],
+      [Markup.button.callback('💡 Bantuan & Panduan', 'cmd_help')]
     ]);
 
     if (ctx.callbackQuery) {
@@ -2216,6 +2337,7 @@ export function initTelegramBot(db: any) {
                     `• <code>/news</code> - Kalender ekonomi Forex & rilis berita High-Impact\n` +
                     `  <i>Opsi:</i> <code>/news today</code>, <code>/news usd</code>, <code>/news high</code>, <code>/news all</code>\n` +
                     `• <code>/setrisk [persen]</code> - Atur toleransi risiko per trade (cth: <code>/setrisk 1.5</code>)\n` +
+                    `• <code>/setaccount [nano/cent/standard]</code> - Ganti tipe akun: Standard ($10), Cent (10¢), atau Nano (1¢/lot)\n` +
                     `• <code>/lot [pips]</code> - Hitung lot optimal berdasarkan toleransi risiko akun\n\n` +
                     `<b>3. KEUANGAN & PERFORMA:</b>\n` +
                     `• <code>/saldo</code> - Cek modal awal, penarikan & current equity\n` +
@@ -2407,7 +2529,7 @@ export function initTelegramBot(db: any) {
           });
 
           const s = await getUserEquityData(actualUserId, user);
-          const pipsGained = calculatePips(pair, entryPrice, tpPrice, realizedPl, lotSize, isWin);
+          const pipsGained = calculatePips(pair, entryPrice, tpPrice, realizedPl, lotSize, isWin, user?.currency === 'NANO');
           const sign = realizedPl >= 0 ? '+' : '';
 
           let msg = `📊 <b>[TRADE CSV RECORDED]</b>\n` +
@@ -2569,7 +2691,7 @@ export function initTelegramBot(db: any) {
       if (pnl < 0) result = 'LOSS';
 
       const isWin = result.toUpperCase() === 'WIN';
-      const pips = calculatePips(pair, entry, tp, pnl, lot, isWin);
+      const pips = calculatePips(pair, entry, tp, pnl, lot, isWin, user?.currency === 'NANO');
 
       const ins = await db.execute({
         sql: `INSERT INTO trades (

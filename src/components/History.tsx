@@ -44,13 +44,14 @@ export default function History({ trades, onTradeUpdated, user }: { trades: Trad
     // This is purely heuristic since we don't have accurate contract sizes in DB.
     // If standard forex, PIP value for 1 Lot is ~$10. 
     // If Gold, 1 point is $100 per lot.
-    let pipValue = 10; 
+    const isNano = user?.currency === 'NANO';
+    let pipValue = isNano ? 1 : 10; 
     if (trade.pair.toUpperCase().includes('XAU') || trade.pair.toUpperCase().includes('GOLD')) {
-      pipValue = 10; // Standard: 10 USD per standard lot for 1 pip (0.10 price move, $1.00 move = 10 pips)
+      pipValue = isNano ? 1 : 10; // Nano: 1¢ per lot | Standard/Cent: 10 per lot
     } else if (trade.pair.toUpperCase().includes('JPY')) {
-      pipValue = 8.5; // Roughly $8.50 per lot
+      pipValue = isNano ? 0.85 : 8.5;
     } else if (trade.pair.toUpperCase().includes('BTC') || trade.pair.toUpperCase().includes('ETH')) {
-      pipValue = 1;
+      pipValue = isNano ? 0.1 : 1;
     }
     const lots = trade.position_size || 0.01;
     // Calculate Pips simply by: (P/L) / (Lots * PipValue)

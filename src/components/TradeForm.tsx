@@ -95,13 +95,14 @@ export default function TradeForm({ onTradeAdded, currentEquity = 10000, user }:
     if (realizedPl !== null && realizedPl !== undefined && !isNaN(Number(realizedPl))) {
       const plNum = Number(realizedPl);
       const sz = positionSize || 0.1;
-      let pipVal = 10;
-      if (pUpper.includes('BTC') || pUpper.includes('ETH')) pipVal = 1;
-      else if (pUpper.includes('JPY')) pipVal = 8.5;
+      const isNano = user?.currency === 'NANO';
+      let pipVal = isNano ? 1 : 10;
+      if (pUpper.includes('BTC') || pUpper.includes('ETH')) pipVal = isNano ? 0.1 : 1;
+      else if (pUpper.includes('JPY')) pipVal = isNano ? 0.85 : 8.5;
       return Math.round(plNum / (sz * pipVal));
     }
     return 0;
-  }, [pair, entryPrice, sl, tp, result, realizedPl, positionSize]);
+  }, [pair, entryPrice, sl, tp, result, realizedPl, positionSize, user?.currency]);
 
   const onSubmit = async (data: FormValues) => {
     let realized_pl = data.realized_pl !== null && String(data.realized_pl) !== '' && !isNaN(Number(data.realized_pl)) ? Number(data.realized_pl) : null;

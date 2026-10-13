@@ -580,7 +580,7 @@ app.post("/api/auth/telegram-tag", authMiddleware, async (req: any, res) => {
 app.post("/api/auth/currency", authMiddleware, async (req: any, res) => {
   try {
     const { currency } = req.body;
-    if (!['USD', 'USC', 'IDR'].includes(currency)) {
+    if (!['USD', 'USC', 'NANO', 'IDR'].includes(currency)) {
       return res.status(400).json({ error: "Invalid currency" });
     }
     await db.execute({

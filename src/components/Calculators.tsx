@@ -4,11 +4,15 @@ import { formatCurrency } from '../utils';
 
 import { User } from '../types';
 export default function Calculators({ currentEquity, user }: { currentEquity: number, user?: User | null }) {
+  // Account Type selection ('standard' | 'cent' | 'nano')
+  const initialType = user?.currency === 'NANO' ? 'nano' : (user?.currency === 'USC' ? 'cent' : 'standard');
+  const [accountType, setAccountType] = useState<'standard' | 'cent' | 'nano'>(initialType);
+
   // Lot Calculator State
   const [lotBal, setLotBal] = useState<number>(currentEquity);
   const [riskPercent, setRiskPercent] = useState<number>(1);
   const [slPips, setSlPips] = useState<number>(20);
-  const [pipValue, setPipValue] = useState<number>(10);
+  const [pipValue, setPipValue] = useState<number>(initialType === 'nano' ? 1 : 10);
 
   // MM Compounding State
   const [mmBal, setMmBal] = useState<number>(currentEquity);
@@ -19,6 +23,25 @@ export default function Calculators({ currentEquity, user }: { currentEquity: nu
     setLotBal(currentEquity);
     setMmBal(currentEquity);
   }, [currentEquity]);
+
+  useEffect(() => {
+    if (user?.currency === 'NANO') {
+      setAccountType('nano');
+      setPipValue(1);
+    } else if (user?.currency === 'USC') {
+      setAccountType('cent');
+      setPipValue(10);
+    }
+  }, [user?.currency]);
+
+  const handleAccountTypeChange = (type: 'standard' | 'cent' | 'nano') => {
+    setAccountType(type);
+    if (type === 'nano') {
+      setPipValue(1);
+    } else {
+      setPipValue(10);
+    }
+  };
 
   // Derived Lot Sizes
   const riskAmount = (lotBal * riskPercent) / 100;
@@ -50,8 +73,77 @@ export default function Calculators({ currentEquity, user }: { currentEquity: nu
               </div>
               <div>
                 <h2 className="text-lg font-bold tracking-tighter uppercase whitespace-nowrap">Lot Auto-Calculator</h2>
-                <p className="text-xs text-slate-500 dark:text-neutral-500 hidden sm:block">Calculate lot size based on risk and stop loss.</p>
+                <p className="text-xs text-slate-500 dark:text-neutral-500 hidden sm:block">Kalkulasi lot & risiko untuk Standard, Cent, atau Nano.</p>
               </div>
+            </div>
+          </div>
+
+          {/* Account Type Selector Buttons */}
+          <div className="flex flex-col gap-2">
+            <label className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Tipe Akun Trading</label>
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={() => handleAccountTypeChange('standard')}
+                className={`py-2 px-3 text-xs font-bold rounded-sm border transition-all text-center ${
+                  accountType === 'standard'
+                    ? 'bg-black dark:bg-neutral-100 text-white dark:text-neutral-900 border-black dark:border-neutral-100 shadow-sm'
+                    : 'bg-slate-50 dark:bg-neutral-950 text-slate-600 dark:text-neutral-400 border-slate-200 dark:border-neutral-800 hover:bg-slate-100 dark:hover:bg-neutral-900'
+                }`}
+              >
+                Standard ($)
+              </button>
+              <button
+                type="button"
+                onClick={() => handleAccountTypeChange('cent')}
+                className={`py-2 px-3 text-xs font-bold rounded-sm border transition-all text-center ${
+                  accountType === 'cent'
+                    ? 'bg-black dark:bg-neutral-100 text-white dark:text-neutral-900 border-black dark:border-neutral-100 shadow-sm'
+                    : 'bg-slate-50 dark:bg-neutral-950 text-slate-600 dark:text-neutral-400 border-slate-200 dark:border-neutral-800 hover:bg-slate-100 dark:hover:bg-neutral-900'
+                }`}
+              >
+                Cent (¢)
+              </button>
+              <button
+                type="button"
+                onClick={() => handleAccountTypeChange('nano')}
+                className={`py-2 px-3 text-xs font-bold rounded-sm border transition-all text-center ${
+                  accountType === 'nano'
+                    ? 'bg-amber-600 dark:bg-amber-500 text-white font-bold border-amber-600 dark:border-amber-500 shadow-sm'
+                    : 'bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-800/60 hover:bg-amber-100 dark:hover:bg-amber-900/40'
+                }`}
+              >
+                Nano (1/10 Cent)
+              </button>
+            </div>
+            
+            {/* Context Notice / Explanation */}
+            <div className="p-3 bg-slate-50 dark:bg-neutral-950 border border-slate-200 dark:border-neutral-800 rounded-sm text-[11px] leading-relaxed text-slate-600 dark:text-neutral-400">
+              {accountType === 'nano' ? (
+                <div>
+                  <span className="font-bold text-amber-600 dark:text-amber-400">✨ Akun Nano Aktif:</span> Pip Value = <b>1¢ ($0.01) per Lot</b>.
+                  <div className="mt-1 font-mono text-[10px] text-slate-500 dark:text-neutral-400">
+                    Contoh: 0.04 Lot × 100 Pips = <b>4¢ (0.04 USD)</b>.<br/>
+                    Formula: <code>Lot = Nominal Risk / (SL Pips × 1)</code>
+                  </div>
+                </div>
+              ) : accountType === 'cent' ? (
+                <div>
+                  <span className="font-bold text-blue-600 dark:text-blue-400">🔹 Akun Cent (USC):</span> Pip Value = <b>10¢ ($0.10) per Lot</b>.
+                  <div className="mt-1 font-mono text-[10px] text-slate-500 dark:text-neutral-400">
+                    Contoh: 0.04 Lot × 100 Pips = <b>40¢ (0.40 USD)</b>.<br/>
+                    Formula: <code>Lot = Nominal Risk / (SL Pips × 10)</code>
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <span className="font-bold text-slate-800 dark:text-neutral-200">🔸 Akun Standard (USD):</span> Pip Value = <b>$10.00 per Lot</b>.
+                  <div className="mt-1 font-mono text-[10px] text-slate-500 dark:text-neutral-400">
+                    Contoh: 0.04 Lot × 100 Pips = <b>$40.00 USD</b>.<br/>
+                    Formula: <code>Lot = Nominal Risk ($) / (SL Pips × 10)</code>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
           
@@ -85,7 +177,9 @@ export default function Calculators({ currentEquity, user }: { currentEquity: nu
               />
             </div>
             <div className="flex flex-col gap-2">
-              <label className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Volume per Pip</label>
+              <label className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                Volume / Pip Value ({accountType === 'nano' ? '1¢/Lot' : '10/Lot'})
+              </label>
               <input 
                 type="number" 
                 value={pipValue} 
@@ -96,7 +190,9 @@ export default function Calculators({ currentEquity, user }: { currentEquity: nu
           </div>
 
           <div className="bg-slate-50 dark:bg-neutral-950 border border-slate-200 dark:border-neutral-800 p-6 flex flex-col items-center justify-center rounded-sm mt-2">
-            <span className="text-[10px] uppercase font-bold tracking-widest text-slate-500 dark:text-neutral-500 mb-2">Custom Lot Size</span>
+            <span className="text-[10px] uppercase font-bold tracking-widest text-slate-500 dark:text-neutral-500 mb-2">
+              Custom Lot Size ({accountType.toUpperCase()})
+            </span>
             <span className="text-4xl font-bold tracking-tighter text-black dark:text-neutral-100">
               {isFinite(lotSize) && slPips > 0 && pipValue > 0 ? lotSize.toFixed(2) : '0.00'}
             </span>
