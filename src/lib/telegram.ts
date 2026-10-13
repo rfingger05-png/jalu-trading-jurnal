@@ -306,6 +306,7 @@ export function initTelegramBot(db: any) {
       { command: 'news', description: '📰 Kalender ekonomi Forex & berita pasar high-impact' },
       { command: 'setrisk', description: '🛡️ Atur toleransi risiko per trade: /setrisk [persen]' },
       { command: 'setaccount', description: '🏷️ Pilih tipe akun: Standard ($), Cent (¢), atau Nano (¢)' },
+      { command: 'setmodal', description: '💰 Setel modal awal akun: /setmodal [jumlah]' },
       { command: 'deposit', description: '📥 Catat deposit saldo: /deposit [jumlah]' },
       { command: 'wd', description: '📤 Catat penarikan keuntungan: /wd [jumlah]' },
       { command: 'undo', description: '↩️ Batalkan/hapus trade terakhir' },
@@ -1357,28 +1358,33 @@ export function initTelegramBot(db: any) {
 
       const s = await getUserEquityData(user.id, user);
       const signPL = s.totalPL >= 0 ? '+' : '';
+      const isCent = user.currency === 'USC' || user.currency === 'NANO';
+      const sym = isCent ? '¢' : (user.currency === 'IDR' ? 'Rp ' : '$');
+      const isNano = user.currency === 'NANO';
+      const typeLabel = isNano ? 'Nano (1¢/lot)' : isCent ? 'Cent (10¢/lot)' : 'Standard ($10/lot)';
 
       let msg = `💰 <b>RINGKASAN SALDO & EQUITY TRADING</b>\n` +
                 `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
                 `👤 <b>Akun:</b> <code>${user.username}</code>\n` +
-                `🏷️ <b>Mode:</b> <code>${user.current_mode || 'backtest'}</code>\n` +
+                `🏷️ <b>Tipe:</b> <code>${typeLabel}</code> | <b>Mode:</b> <code>${user.current_mode || 'backtest'}</code>\n` +
                 `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                `💵 <b>Modal Awal:</b> $${s.initialBal.toLocaleString('en-US', { minimumFractionDigits: 2 })}\n` +
-                `📥 <b>Total Deposit:</b> +$${s.totalDeposit.toLocaleString('en-US', { minimumFractionDigits: 2 })}\n` +
-                `📤 <b>Total Penarikan (WD):</b> -$${s.totalWithdraw.toLocaleString('en-US', { minimumFractionDigits: 2 })}\n` +
-                `📊 <b>Net Realized P/L:</b> <b>${signPL}$${s.totalPL.toLocaleString('en-US', { minimumFractionDigits: 2 })}</b>\n` +
+                `💵 <b>Modal Awal:</b> ${sym}${s.initialBal.toLocaleString('en-US', { minimumFractionDigits: 2 })}\n` +
+                `📥 <b>Total Deposit:</b> +${sym}${s.totalDeposit.toLocaleString('en-US', { minimumFractionDigits: 2 })}\n` +
+                `📤 <b>Total Penarikan (WD):</b> -${sym}${s.totalWithdraw.toLocaleString('en-US', { minimumFractionDigits: 2 })}\n` +
+                `📊 <b>Net Realized P/L:</b> <b>${signPL}${sym}${s.totalPL.toLocaleString('en-US', { minimumFractionDigits: 2 })}</b>\n` +
                 `────────────────────────────\n` +
-                `⚡ <b>CURRENT EQUITY:</b> <b>$${s.currentEquity.toLocaleString('en-US', { minimumFractionDigits: 2 })}</b>\n` +
+                `⚡ <b>CURRENT EQUITY:</b> <b>${sym}${s.currentEquity.toLocaleString('en-US', { minimumFractionDigits: 2 })}</b>\n` +
                 `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
                 `🎯 <b>Performa Trading:</b>\n` +
                 `• Win Rate: <b>${s.winRate}%</b> (${s.tradesCount} total trades)\n` +
                 `• Akumulasi Pips: <b>${s.totalPips >= 0 ? '+' : ''}${s.totalPips} Pips</b>\n` +
-                `• Sisa Buffer Drawdown Hari Ini: <b>$${s.ddRemaining.toFixed(2)}</b>\n` +
+                `• Sisa Buffer Drawdown Hari Ini: <b>${sym}${s.ddRemaining.toFixed(2)}</b>\n` +
                 `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                `<i>💡 Gunakan /deposit atau /wd untuk mutasi saldo secara instan.</i>`;
+                `<i>💡 Gunakan <code>/setmodal [jumlah]</code> untuk mengubah modal awal akun.</i>`;
 
       const buttons = [
         [Markup.button.callback('📝 Jurnal Trade Baru', 'cmd_start_journal'), Markup.button.callback('📊 Hari Ini', 'cmd_today')],
+        [Markup.button.callback('💰 Ubah Modal (/setmodal)', 'cmd_setmodal'), Markup.button.callback('🧮 Hitung Lot (/lot)', 'cmd_lot')],
         [Markup.button.callback('🔙 Menu Utama', 'cmd_menu')]
       ];
 
@@ -1941,48 +1947,108 @@ export function initTelegramBot(db: any) {
     }
   });
 
-  // COMMAND: /setbalance
-  bot.command(['setbalance', 'setsaldo'], async (ctx) => {
+  // COMMAND: /setmodal (also supports /setbalance, /setsaldo)
+  const handleSetModal = async (ctx: any, presetAmount?: number) => {
     try {
-      const parts = ctx.message.text.trim().split(/\s+/);
-      if (parts.length < 2) {
-        return ctx.reply('❌ Format salah.\nGunakan: <code>/setbalance [jumlah]</code>\nContoh: <code>/setbalance 10000</code>', { parse_mode: 'HTML' });
-      }
-
-      const amount = parseFloat(parts[1].replace(/,/g, ''));
-      if (isNaN(amount) || amount <= 0) {
-        return ctx.reply('❌ Jumlah saldo modal harus lebih dari 0.');
-      }
-
       const telegramId = ctx.from?.id?.toString();
       const user = await getActiveUser(telegramId, ctx.from?.username);
       if (!user) return sendUnlinkedPrompt(ctx);
 
-      if (user.prop_firm_enabled) {
-        await db.execute({
-          sql: "UPDATE users SET prop_firm_balance = ? WHERE id = ?",
-          args: [amount, user.id]
-        });
-      } else {
-        await db.execute({
-          sql: "UPDATE users SET initial_balance = ? WHERE id = ?",
-          args: [amount, user.id]
-        });
+      let amount = presetAmount;
+      if (amount === undefined) {
+        const text = (ctx.message?.text || '').trim();
+        const parts = text.split(/\s+/);
+        if (parts.length > 1) {
+          const parsed = parseFloat(parts[1].replace(/,/g, ''));
+          if (!isNaN(parsed) && parsed > 0) {
+            amount = parsed;
+          }
+        }
       }
 
+      const isCent = user.currency === 'USC' || user.currency === 'NANO';
+      const sym = isCent ? '¢' : (user.currency === 'IDR' ? 'Rp ' : '$');
+
+      if (amount !== undefined && !isNaN(amount) && amount > 0) {
+        if (user.prop_firm_enabled) {
+          await db.execute({
+            sql: "UPDATE users SET prop_firm_balance = ? WHERE id = ?",
+            args: [amount, user.id]
+          });
+          user.prop_firm_balance = amount;
+        } else {
+          await db.execute({
+            sql: "UPDATE users SET initial_balance = ? WHERE id = ?",
+            args: [amount, user.id]
+          });
+          user.initial_balance = amount;
+        }
+
+        const s = await getUserEquityData(user.id, user);
+
+        const msg = `🎯 <b>[MODAL AWAL BERHASIL DIPERBARUI]</b>\n` +
+                    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                    `👤 Akun: <code>${user.username}</code>\n` +
+                    `💰 Modal Baru: <b>${sym}${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b>\n` +
+                    `⚡ Current Equity: <b>${sym}${s.currentEquity.toFixed(2)}</b>\n\n` +
+                    `💡 <i>Kini kalkulasi drawdown, performa akun, dan kalkulator <code>/lot</code> menggunakan modal awal ini.</i>`;
+
+        const btns = [
+          [{ text: '💰 Cek Saldo & Equity', callback_data: 'cmd_saldo' }],
+          [{ text: '🧮 Hitung Lot (/lot)', callback_data: 'cmd_lot' }],
+          [{ text: '📱 Menu Utama', callback_data: 'cmd_menu' }]
+        ];
+        return sendOrEdit(ctx, msg, false, btns);
+      }
+
+      // If no valid amount provided, show current initial balance and quick preset buttons
+      const currentInitial = user.prop_firm_enabled 
+        ? (user.prop_firm_balance || 1000) 
+        : (user.initial_balance || 10000);
       const s = await getUserEquityData(user.id, user);
 
-      const msg = `🎯 <b>[MODAL AWAL DIPERBARUI]</b>\n` +
+      const msg = `💰 <b>ATUR MODAL AWAL AKUN (/setmodal)</b>\n` +
                   `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
                   `👤 Akun: <code>${user.username}</code>\n` +
-                  `💰 Modal Baru: <b>$${amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}</b>\n` +
-                  `⚡ Current Equity: <b>$${s.currentEquity.toFixed(2)}</b>`;
+                  `💵 Modal Awal Saat Ini: <b>${sym}${Number(currentInitial).toLocaleString('en-US', { minimumFractionDigits: 2 })}</b>\n` +
+                  `⚡ Current Equity: <b>${sym}${s.currentEquity.toFixed(2)}</b>\n\n` +
+                  `Pilih nominal modal awal cepat di bawah atau ketik:\n` +
+                  `<code>/setmodal [jumlah]</code>\n\n` +
+                  `<i>Contoh:</i>\n` +
+                  `• <code>/setmodal 10000</code>\n` +
+                  `• <code>/setmodal 5000</code>\n` +
+                  `• <code>/setmodal 100</code>`;
 
-      await ctx.reply(msg, { parse_mode: 'HTML' });
+      const presets = isCent
+        ? [1000, 5000, 10000, 50000, 100000, 500000]
+        : [500, 1000, 5000, 10000, 25000, 50000, 100000, 200000];
+
+      const presetRows: any[] = [];
+      let currentRow: any[] = [];
+      presets.forEach((val) => {
+        const label = `${sym}${val >= 1000 ? `${val / 1000}k` : val}`;
+        currentRow.push(Markup.button.callback(label, `cmd_setmodal_${val}`));
+        if (currentRow.length === 3) {
+          presetRows.push(currentRow);
+          currentRow = [];
+        }
+      });
+      if (currentRow.length > 0) presetRows.push(currentRow);
+
+      presetRows.push([Markup.button.callback('📱 Kembali ke Menu', 'cmd_menu')]);
+
+      return sendOrEdit(ctx, msg, false, presetRows);
     } catch (e) {
       console.error(e);
-      await ctx.reply('❌ Gagal mengubah modal saldo.');
+      await ctx.reply('❌ Gagal mengubah modal awal.');
     }
+  };
+
+  bot.command(['setmodal', 'setbalance', 'setsaldo'], (ctx: any) => handleSetModal(ctx));
+  bot.action('cmd_setmodal', (ctx: any) => handleSetModal(ctx));
+  bot.action(/^cmd_setmodal_(\d+)$/, (ctx: any) => {
+    const val = parseFloat(ctx.match[1]);
+    return handleSetModal(ctx, val);
   });
 
   // COMMAND: /undo - Delete last trade
@@ -2345,7 +2411,7 @@ export function initTelegramBot(db: any) {
                     `• <code>/weekly</code> - Statistik performa 7 hari terakhir\n` +
                     `• <code>/deposit [jumlah]</code> - Catat deposit saldo\n` +
                     `• <code>/wd [jumlah]</code> - Catat penarikan keuntungan\n` +
-                    `• <code>/setbalance [jumlah]</code> - Setel modal awal\n\n` +
+                    `• <code>/setmodal [jumlah]</code> - Setel modal awal akun (cth: <code>/setmodal 10000</code>)\n\n` +
                     `<b>4. MANAJEMEN AKUN:</b>\n` +
                     `• <code>/menu</code> - Buka Control Panel navigasi utama\n` +
                     `• <code>/accounts</code> - Daftar akun multi-user\n` +
