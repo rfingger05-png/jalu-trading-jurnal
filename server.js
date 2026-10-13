@@ -37,23 +37,92 @@ var sendOrEdit = async (ctx, msg, useBackButton = false, customButtons) => {
     console.error("sendOrEdit error:", err);
   }
 };
-function calculatePips(pair, entry, exitPrice, pl, lot, isWin) {
+function calculatePips(pair, entry, exitPrice, pl, lot, isWin, isNano = false) {
   const p = (pair || "XAUUSD").toUpperCase();
-  let multiplier = 10;
-  if (p.includes("JPY")) multiplier = 100;
-  else if (p.includes("EUR") || p.includes("GBP") || p.includes("AUD") || p.includes("NZD") || p.includes("USD")) {
-    if (!p.includes("XAU")) multiplier = 1e4;
-  } else if (p.includes("BTC") || p.includes("ETH")) multiplier = 1;
+  const safeLot = lot > 0 ? lot : 0.1;
   if (entry > 0 && exitPrice > 0 && Math.abs(exitPrice - entry) > 0) {
+    let multiplier = 10;
+    if (p.includes("JPY")) multiplier = 100;
+    else if (p.includes("EUR") || p.includes("GBP") || p.includes("AUD") || p.includes("NZD") || p.includes("CAD") || p.includes("CHF") || p.includes("USD") && !p.includes("XAU") && !p.includes("BTC") && !p.includes("ETH")) {
+      multiplier = 1e4;
+    } else if (p.includes("BTC") || p.includes("ETH")) multiplier = 1;
     const diff = Math.round(Math.abs(exitPrice - entry) * multiplier);
     if (diff > 0 && diff < 5e4) return isWin ? diff : -diff;
   }
-  if (pl !== 0 && lot > 0) {
-    const est = Math.round(Math.abs(pl) / (lot * (multiplier === 1e4 ? 10 : 1)));
-    if (est > 0 && est < 5e4) return pl >= 0 ? est : -est;
+  if (pl !== 0 && safeLot > 0) {
+    let pipValuePerLot = isNano ? 1 : 10;
+    if (p.includes("BTC") || p.includes("ETH")) {
+      pipValuePerLot = isNano ? 0.1 : 1;
+    } else if (p.includes("JPY")) {
+      pipValuePerLot = isNano ? 0.85 : 8.5;
+    }
+    const pipWorth = safeLot * pipValuePerLot;
+    if (pipWorth > 0) {
+      const calculatedPips = Math.round(Math.abs(pl) / pipWorth);
+      if (calculatedPips > 0 && calculatedPips < 5e4) {
+        return pl >= 0 ? calculatedPips : -calculatedPips;
+      }
+    }
   }
   return Math.round(pl);
 }
+var cachedNews = null;
+async function fetchForexNews(force = false) {
+  const now = Date.now();
+  if (!force && cachedNews && now - cachedNews.fetchedAt < 10 * 60 * 1e3) {
+    return cachedNews.data;
+  }
+  try {
+    const res = await fetch("https://nfs.faireconomy.media/ff_calendar_thisweek.json", {
+      headers: { "User-Agent": "Mozilla/5.0 (TelegramTradingJournalBot)" }
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (Array.isArray(data) && data.length > 0) {
+      cachedNews = { data, fetchedAt: now };
+      return data;
+    }
+  } catch (err) {
+    console.warn("Could not fetch live ForexFactory news, using cache or fallback:", err);
+  }
+  return cachedNews?.data || [];
+}
+var getCurrencyFlag = (country) => {
+  switch ((country || "").toUpperCase()) {
+    case "USD":
+      return "\u{1F1FA}\u{1F1F8}";
+    case "EUR":
+      return "\u{1F1EA}\u{1F1FA}";
+    case "GBP":
+      return "\u{1F1EC}\u{1F1E7}";
+    case "JPY":
+      return "\u{1F1EF}\u{1F1F5}";
+    case "AUD":
+      return "\u{1F1E6}\u{1F1FA}";
+    case "CAD":
+      return "\u{1F1E8}\u{1F1E6}";
+    case "CHF":
+      return "\u{1F1E8}\u{1F1ED}";
+    case "NZD":
+      return "\u{1F1F3}\u{1F1FF}";
+    case "CNY":
+      return "\u{1F1E8}\u{1F1F3}";
+    default:
+      return "\u{1F310}";
+  }
+};
+var getNewsImpactBadge = (impact) => {
+  switch ((impact || "").toLowerCase()) {
+    case "high":
+      return "\u{1F534} <b>[HIGH]</b>";
+    case "medium":
+      return "\u{1F7E0} <b>[MED]</b>";
+    case "low":
+      return "\u{1F7E1} <b>[LOW]</b>";
+    default:
+      return "\u26AA <b>[HOLIDAY]</b>";
+  }
+};
 function parseTradeData(content) {
   try {
     let parsedPips = null;
@@ -188,6 +257,10 @@ function initTelegramBot(db2) {
       { command: "today", description: "\u{1F4CA} Rekap statistik performa hari ini" },
       { command: "weekly", description: "\u{1F4C8} Rekap performa 7 hari terakhir" },
       { command: "lot", description: "\u{1F9EE} Hitung lot otomatis berdasarkan toleransi risiko" },
+      { command: "news", description: "\u{1F4F0} Kalender ekonomi Forex & berita pasar high-impact" },
+      { command: "setrisk", description: "\u{1F6E1}\uFE0F Atur toleransi risiko per trade: /setrisk [persen]" },
+      { command: "setaccount", description: "\u{1F3F7}\uFE0F Pilih tipe akun: Standard ($), Cent (\xA2), atau Nano (\xA2)" },
+      { command: "setmodal", description: "\u{1F4B0} Setel modal awal akun: /setmodal [jumlah]" },
       { command: "deposit", description: "\u{1F4E5} Catat deposit saldo: /deposit [jumlah]" },
       { command: "wd", description: "\u{1F4E4} Catat penarikan keuntungan: /wd [jumlah]" },
       { command: "undo", description: "\u21A9\uFE0F Batalkan/hapus trade terakhir" },
@@ -259,6 +332,10 @@ function initTelegramBot(db2) {
           PRIMARY KEY (telegram_id, user_id)
         )
       `);
+      try {
+        await db2.execute("ALTER TABLE users ADD COLUMN default_risk REAL DEFAULT 2.5");
+      } catch (_) {
+      }
     } catch (e) {
       console.error("ensureTables error:", e);
     }
@@ -397,7 +474,7 @@ Akun Telegram Anda belum ditautkan ke akun web trading.
       totalPL += pl;
       const isWin = (t.result || "").toUpperCase() === "WIN";
       if (isWin) wins++;
-      const pips = calculatePips(t.pair || "XAUUSD", t.entry_price || 0, t.tp || 0, pl, t.position_size || 0.1, isWin);
+      const pips = t.pips !== null && t.pips !== void 0 && !isNaN(Number(t.pips)) ? Number(t.pips) : calculatePips(t.pair || "XAUUSD", t.entry_price || 0, t.tp || 0, pl, t.position_size || 0.1, isWin, userData?.currency === "NANO");
       totalPips += pips;
       if (pips > 0) winningPips += pips;
     });
@@ -760,7 +837,7 @@ Kirim foto atau screenshot chart entry Anda sekarang di chat.
       const setup = s.setup || "Telegram Journal";
       const mode = user.current_mode || "backtest";
       const isWin = result.toUpperCase() === "WIN";
-      const pips = calculatePips(pair, entry, tp, pnl, lot, isWin);
+      const pips = calculatePips(pair, entry, tp, pnl, lot, isWin, user?.currency === "NANO");
       const insertRes = await db2.execute({
         sql: `INSERT INTO trades (
           user_id, pair, direction, setup_name, entry_price, sl, tp,
@@ -938,7 +1015,7 @@ Gunakan format 1 baris mudah:
       const setupName = notesArr.length > 0 ? notesArr.join(" ") : "Quick Telegram Trade";
       const mode = user.current_mode || "backtest";
       const isWin = result === "WIN";
-      const pips = calculatePips(pair, entry, tp, pnl, lot, isWin);
+      const pips = calculatePips(pair, entry, tp, pnl, lot, isWin, user?.currency === "NANO");
       const ins = await db2.execute({
         sql: `INSERT INTO trades (
           user_id, pair, direction, setup_name, entry_price, sl, tp,
@@ -1093,7 +1170,7 @@ Contoh rugi: <code>/close 15 loss -40</code>`,
       }
       const trade = tradeRes.rows[0];
       const isWin = resStatus === "WIN";
-      const pips = calculatePips(trade.pair, trade.entry_price || 0, trade.tp || 0, pnl, trade.position_size || 0.01, isWin);
+      const pips = calculatePips(trade.pair, trade.entry_price || 0, trade.tp || 0, pnl, trade.position_size || 0.01, isWin, user?.currency === "NANO");
       await db2.execute({
         sql: "UPDATE trades SET result = ?, realized_pl = ?, pips = ? WHERE id = ?",
         args: [resStatus, pnl, pips, tradeId]
@@ -1121,26 +1198,31 @@ Contoh rugi: <code>/close 15 loss -40</code>`,
       if (!user) return sendUnlinkedPrompt(ctx);
       const s = await getUserEquityData(user.id, user);
       const signPL = s.totalPL >= 0 ? "+" : "";
+      const isCent = user.currency === "USC" || user.currency === "NANO";
+      const sym = isCent ? "\xA2" : user.currency === "IDR" ? "Rp " : "$";
+      const isNano = user.currency === "NANO";
+      const typeLabel = isNano ? "Nano (1\xA2/lot)" : isCent ? "Cent (10\xA2/lot)" : "Standard ($10/lot)";
       let msg = `\u{1F4B0} <b>RINGKASAN SALDO & EQUITY TRADING</b>
 \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
 \u{1F464} <b>Akun:</b> <code>${user.username}</code>
-\u{1F3F7}\uFE0F <b>Mode:</b> <code>${user.current_mode || "backtest"}</code>
+\u{1F3F7}\uFE0F <b>Tipe:</b> <code>${typeLabel}</code> | <b>Mode:</b> <code>${user.current_mode || "backtest"}</code>
 \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
-\u{1F4B5} <b>Modal Awal:</b> $${s.initialBal.toLocaleString("en-US", { minimumFractionDigits: 2 })}
-\u{1F4E5} <b>Total Deposit:</b> +$${s.totalDeposit.toLocaleString("en-US", { minimumFractionDigits: 2 })}
-\u{1F4E4} <b>Total Penarikan (WD):</b> -$${s.totalWithdraw.toLocaleString("en-US", { minimumFractionDigits: 2 })}
-\u{1F4CA} <b>Net Realized P/L:</b> <b>${signPL}$${s.totalPL.toLocaleString("en-US", { minimumFractionDigits: 2 })}</b>
+\u{1F4B5} <b>Modal Awal:</b> ${sym}${s.initialBal.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+\u{1F4E5} <b>Total Deposit:</b> +${sym}${s.totalDeposit.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+\u{1F4E4} <b>Total Penarikan (WD):</b> -${sym}${s.totalWithdraw.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+\u{1F4CA} <b>Net Realized P/L:</b> <b>${signPL}${sym}${s.totalPL.toLocaleString("en-US", { minimumFractionDigits: 2 })}</b>
 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-\u26A1 <b>CURRENT EQUITY:</b> <b>$${s.currentEquity.toLocaleString("en-US", { minimumFractionDigits: 2 })}</b>
+\u26A1 <b>CURRENT EQUITY:</b> <b>${sym}${s.currentEquity.toLocaleString("en-US", { minimumFractionDigits: 2 })}</b>
 \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
 \u{1F3AF} <b>Performa Trading:</b>
 \u2022 Win Rate: <b>${s.winRate}%</b> (${s.tradesCount} total trades)
 \u2022 Akumulasi Pips: <b>${s.totalPips >= 0 ? "+" : ""}${s.totalPips} Pips</b>
-\u2022 Sisa Buffer Drawdown Hari Ini: <b>$${s.ddRemaining.toFixed(2)}</b>
+\u2022 Sisa Buffer Drawdown Hari Ini: <b>${sym}${s.ddRemaining.toFixed(2)}</b>
 \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
-<i>\u{1F4A1} Gunakan /deposit atau /wd untuk mutasi saldo secara instan.</i>`;
+<i>\u{1F4A1} Gunakan <code>/setmodal [jumlah]</code> untuk mengubah modal awal akun.</i>`;
       const buttons = [
         [Markup.button.callback("\u{1F4DD} Jurnal Trade Baru", "cmd_start_journal"), Markup.button.callback("\u{1F4CA} Hari Ini", "cmd_today")],
+        [Markup.button.callback("\u{1F4B0} Ubah Modal (/setmodal)", "cmd_setmodal"), Markup.button.callback("\u{1F9EE} Hitung Lot (/lot)", "cmd_lot")],
         [Markup.button.callback("\u{1F519} Menu Utama", "cmd_menu")]
       ];
       await sendOrEdit(ctx, msg, false, buttons);
@@ -1255,34 +1337,60 @@ Contoh rugi: <code>/close 15 loss -40</code>`,
       const telegramId = ctx.from?.id?.toString();
       const user = await getActiveUser(telegramId, ctx.from?.username);
       const eq = user ? (await getUserEquityData(user.id, user)).currentEquity : 1e3;
+      const userRisk = user && user.default_risk !== void 0 && user.default_risk !== null && !isNaN(Number(user.default_risk)) ? Number(user.default_risk) : 2.5;
+      const isNano = user?.currency === "NANO";
+      const isCent = user?.currency === "USC";
+      const pipMultiplier = isNano ? 1 : 10;
+      const unitSym = isNano ? "\xA2" : isCent ? "\xA2" : "$";
+      const accountTypeName = isNano ? "Nano (1 pip = 1\xA2/lot)" : isCent ? "Cent (1 pip = 10\xA2/lot)" : "Standard (1 pip = $10/lot)";
+      const userRiskNominal = eq * (userRisk / 100);
       let msg = `\u{1F9EE} <b>KALKULATOR LOT & RISK MANAGEMENT</b>
 \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
-Account Equity: <b>$${eq.toFixed(2)}</b>
+\u{1F464} Akun: <b>${user?.username || "Trader"}</b>
+\u{1F3F7}\uFE0F Tipe Akun: <b>${accountTypeName}</b>
+\u{1F4B0} Equity: <b>${unitSym}${eq.toFixed(2)}</b>
+\u{1F6E1}\uFE0F Setting Risiko: <b>${userRisk}%</b> (Ganti: <code>/setrisk</code>)
+\u{1F4A1} Pip Value: <b>${isNano ? "1\xA2 ($0.01)" : isCent ? "10\xA2 ($0.10)" : "$10.00"} / 1.00 Lot</b>
 
 `;
       if (customPips && customPips > 0) {
-        const risk1 = eq * 0.01 / (customPips * 10);
-        const risk2 = eq * 0.02 / (customPips * 10);
-        const risk25 = eq * 0.025 / (customPips * 10);
+        const userLot = userRiskNominal / (customPips * pipMultiplier);
+        const risk1Lot = eq * 0.01 / (customPips * pipMultiplier);
+        const risk2Lot = eq * 0.02 / (customPips * pipMultiplier);
         msg += `\u{1F3AF} <b>Stop Loss: ${customPips} Pips</b>
-\u2022 Risk 1.0% ($${(eq * 0.01).toFixed(2)}) \u27A1\uFE0F <b>${risk1.toFixed(2)} Lot</b>
-\u2022 Risk 2.0% ($${(eq * 0.02).toFixed(2)}) \u27A1\uFE0F <b>${risk2.toFixed(2)} Lot</b>
-\u2022 Risk 2.5% ($${(eq * 0.025).toFixed(2)}) \u27A1\uFE0F <b>${risk25.toFixed(2)} Lot</b>
+\u2B50 <b>Rekomendasi Anda (${userRisk}% = ${unitSym}${userRiskNominal.toFixed(2)}):</b> \u27A1\uFE0F <b>${userLot.toFixed(2)} Lot</b>
 
-<i>Formula: Lot = Risk ($) / (SL Pips \xD7 10)</i>`;
+<i>Perbandingan toleransi risiko lain:</i>
+\u2022 Risk 1.0% (${unitSym}${(eq * 0.01).toFixed(2)}) \u27A1\uFE0F <b>${risk1Lot.toFixed(2)} Lot</b>
+\u2022 Risk 2.0% (${unitSym}${(eq * 0.02).toFixed(2)}) \u27A1\uFE0F <b>${risk2Lot.toFixed(2)} Lot</b>
+
+<i>Formula: Lot = Nominal Risk / (SL Pips \xD7 ${pipMultiplier})</i>
+<i>(0.04 Lot \xD7 100 Pips = ${isNano ? "4\xA2" : isCent ? "40\xA2" : "$40"})</i>`;
       } else {
-        const risk25 = eq * 0.025;
-        msg += `\u{1F6E1}\uFE0F <b>Rekomendasi Lot (Risk 2.5% = $${risk25.toFixed(2)}):</b>
-\u2022 SL 15 pips \u27A1\uFE0F <b>${(risk25 / 150).toFixed(2)} Lot</b>
-\u2022 SL 20 pips \u27A1\uFE0F <b>${(risk25 / 200).toFixed(2)} Lot</b>
-\u2022 SL 25 pips \u27A1\uFE0F <b>${(risk25 / 250).toFixed(2)} Lot</b>
-\u2022 SL 30 pips \u27A1\uFE0F <b>${(risk25 / 300).toFixed(2)} Lot</b>
-\u2022 SL 40 pips \u27A1\uFE0F <b>${(risk25 / 400).toFixed(2)} Lot</b>
-\u2022 SL 50 pips \u27A1\uFE0F <b>${(risk25 / 500).toFixed(2)} Lot</b>
+        msg += `\u{1F6E1}\uFE0F <b>Rekomendasi Lot (Setting Risiko ${userRisk}% = ${unitSym}${userRiskNominal.toFixed(2)}):</b>
+\u2022 SL 15 pips \u27A1\uFE0F <b>${(userRiskNominal / (15 * pipMultiplier)).toFixed(2)} Lot</b>
+\u2022 SL 20 pips \u27A1\uFE0F <b>${(userRiskNominal / (20 * pipMultiplier)).toFixed(2)} Lot</b>
+\u2022 SL 25 pips \u27A1\uFE0F <b>${(userRiskNominal / (25 * pipMultiplier)).toFixed(2)} Lot</b>
+\u2022 SL 30 pips \u27A1\uFE0F <b>${(userRiskNominal / (30 * pipMultiplier)).toFixed(2)} Lot</b>
+\u2022 SL 40 pips \u27A1\uFE0F <b>${(userRiskNominal / (40 * pipMultiplier)).toFixed(2)} Lot</b>
+\u2022 SL 50 pips \u27A1\uFE0F <b>${(userRiskNominal / (50 * pipMultiplier)).toFixed(2)} Lot</b>
 
-<i>Ketik <code>/lot [pips]</code> untuk menghitung SL spesifik (cth: <code>/lot 22</code>).</i>`;
+<i>\u{1F4A1} Ketik <code>/lot [pips]</code> untuk menghitung SL spesifik (cth: <code>/lot 25</code>).
+Ketik <code>/setrisk [persen]</code> untuk mengatur persentase risiko.
+Ketik <code>/setaccount [nano/cent/standard]</code> untuk ganti tipe akun.</i>`;
       }
-      await sendOrEdit(ctx, msg, true);
+      const buttons = [
+        [
+          { text: isNano ? "\u2705 Nano (1\xA2)" : "Ganti ke Nano (1\xA2)", callback_data: "cmd_set_account_nano" },
+          { text: isCent ? "\u2705 Cent (10\xA2)" : "Ganti ke Cent (10\xA2)", callback_data: "cmd_set_account_cent" },
+          { text: !isNano && !isCent ? "\u2705 Standard ($10)" : "Ganti Standard ($10)", callback_data: "cmd_set_account_standard" }
+        ],
+        [
+          { text: "\u{1F6E1}\uFE0F Atur Risiko (/setrisk)", callback_data: "cmd_setrisk" },
+          { text: "\u{1F4F1} Menu Utama", callback_data: "cmd_menu" }
+        ]
+      ];
+      await sendOrEdit(ctx, msg, false, buttons);
     } catch (e) {
       console.error(e);
       await ctx.reply("Terjadi kesalahan kalkulator lot.");
@@ -1290,6 +1398,262 @@ Account Equity: <b>$${eq.toFixed(2)}</b>
   };
   bot2.command("lot", handleLotCalc);
   bot2.action("cmd_lot", handleLotCalc);
+  const handleSetAccount = async (ctx, targetType) => {
+    try {
+      const telegramId = ctx.from?.id?.toString();
+      const user = await getActiveUser(telegramId, ctx.from?.username);
+      if (!user) {
+        return ctx.reply("\u26A0\uFE0F Akun belum terhubung. Gunakan <code>/link [username]</code> terlebih dahulu.", { parse_mode: "HTML" });
+      }
+      let chosen = targetType;
+      if (!chosen) {
+        const text = (ctx.message?.text || "").trim().toLowerCase();
+        const parts = text.split(/\s+/);
+        if (parts.length > 1) {
+          const arg = parts[1];
+          if (arg.includes("nano")) chosen = "NANO";
+          else if (arg.includes("cent") || arg.includes("usc")) chosen = "USC";
+          else if (arg.includes("usd") || arg.includes("standard")) chosen = "USD";
+        }
+      }
+      if (chosen && ["NANO", "USC", "USD"].includes(chosen)) {
+        await ensureTables();
+        await db2.execute({
+          sql: "UPDATE users SET currency = ? WHERE id = ?",
+          args: [chosen, user.id]
+        });
+        user.currency = chosen;
+        const isNano = chosen === "NANO";
+        const isCent = chosen === "USC";
+        const label = isNano ? "Nano (1 pip = 1\xA2 | 0.04 lot 100 pips = 4\xA2)" : isCent ? "Cent (1 pip = 10\xA2 | 0.04 lot 100 pips = 40\xA2)" : "Standard (1 pip = $10 | 0.04 lot 100 pips = $40)";
+        const successMsg = `\u{1F3F7}\uFE0F <b>TIPE AKUN BERHASIL DIPERBARUI!</b>
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
+\u{1F464} Akun: <b>${user.username}</b>
+\u26A1 Tipe Baru: <b>${label}</b>
+
+\u{1F4A1} <i>Kini kalkulasi lot <code>/lot</code> dan penghitungan pips trade otomatis menggunakan multiplier akun ${chosen}!</i>`;
+        const btns2 = [
+          [{ text: "\u{1F9EE} Hitung Lot Sekarang", callback_data: "cmd_lot" }],
+          [{ text: "\u{1F4F1} Buka Menu Utama", callback_data: "cmd_menu" }]
+        ];
+        return sendOrEdit(ctx, successMsg, false, btns2);
+      }
+      const current = user.currency || "USD";
+      const currentLabel = current === "NANO" ? "Nano (1\xA2/lot)" : current === "USC" ? "Cent (10\xA2/lot)" : "Standard ($10/lot)";
+      const msg = `\u{1F3F7}\uFE0F <b>PILIH TIPE AKUN TRADING</b>
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
+\u{1F464} Akun: <b>${user.username}</b>
+Status Saat Ini: <b>${currentLabel}</b>
+
+Pilih tipe akun Anda di bawah ini agar rumus lot & pips akurat:
+\u2022 <b>Standard (USD):</b> 1 lot = $10/pip | 0.04 lot 100 pips = $40.00
+\u2022 <b>Cent (USC):</b> 1 lot = 10\xA2/pip | 0.04 lot 100 pips = 40\xA2
+\u2022 <b>Nano:</b> 1 lot = 1\xA2/pip | 0.04 lot 100 pips = 4\xA2
+
+<i>Atau ketik <code>/setaccount nano</code>, <code>/setaccount cent</code>, atau <code>/setaccount standard</code></i>`;
+      const btns = [
+        [
+          { text: current === "NANO" ? "\u2705 Nano (1\xA2)" : "Nano (1\xA2)", callback_data: "cmd_set_account_nano" },
+          { text: current === "USC" ? "\u2705 Cent (10\xA2)" : "Cent (10\xA2)", callback_data: "cmd_set_account_cent" },
+          { text: current !== "NANO" && current !== "USC" ? "\u2705 Standard ($10)" : "Standard ($10)", callback_data: "cmd_set_account_standard" }
+        ],
+        [{ text: "\u{1F4F1} Kembali ke Menu", callback_data: "cmd_menu" }]
+      ];
+      return sendOrEdit(ctx, msg, false, btns);
+    } catch (e) {
+      console.error(e);
+      await ctx.reply("Terjadi kesalahan saat mengatur tipe akun.");
+    }
+  };
+  bot2.command("setaccount", (ctx) => handleSetAccount(ctx));
+  bot2.command("accounttype", (ctx) => handleSetAccount(ctx));
+  bot2.action("cmd_setaccount", (ctx) => handleSetAccount(ctx));
+  bot2.action("cmd_set_account_nano", (ctx) => handleSetAccount(ctx, "NANO"));
+  bot2.action("cmd_set_account_cent", (ctx) => handleSetAccount(ctx, "USC"));
+  bot2.action("cmd_set_account_standard", (ctx) => handleSetAccount(ctx, "USD"));
+  const handleSetRisk = async (ctx, customValue) => {
+    try {
+      const telegramId = ctx.from?.id?.toString();
+      const user = await getActiveUser(telegramId, ctx.from?.username);
+      if (!user) {
+        return ctx.reply("\u26A0\uFE0F Akun belum terhubung. Gunakan <code>/link [username]</code> terlebih dahulu.", { parse_mode: "HTML" });
+      }
+      let targetRisk = customValue;
+      if (targetRisk === void 0) {
+        const text = (ctx.message?.text || "").trim();
+        const parts = text.split(/\s+/);
+        if (parts.length > 1) {
+          const parsed = parseFloat(parts[1].replace("%", ""));
+          if (!isNaN(parsed) && parsed > 0 && parsed <= 50) {
+            targetRisk = parsed;
+          }
+        }
+      }
+      if (targetRisk !== void 0 && !isNaN(targetRisk) && targetRisk > 0 && targetRisk <= 50) {
+        await ensureTables();
+        await db2.execute({
+          sql: "UPDATE users SET default_risk = ? WHERE id = ?",
+          args: [targetRisk, user.id]
+        });
+        user.default_risk = targetRisk;
+        const equityData2 = await getUserEquityData(user.id, user);
+        const eq2 = equityData2.currentEquity;
+        const nominalRisk = eq2 * targetRisk / 100;
+        const successMsg = `\u{1F6E1}\uFE0F <b>TOLERANSI RISIKO DIPERBARUI!</b>
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
+\u{1F464} Akun: <b>${user.username}</b>
+\u26A1 Risiko Baru: <b>${targetRisk}% per trade</b>
+\u{1F4B0} Nominal Risiko (Equity $${eq2.toFixed(2)}): <b>$${nominalRisk.toFixed(2)}</b>
+
+\u{1F4A1} <i>Kini setiap kalkulasi <code>/lot</code> dan rekomendasi posisi otomatis menggunakan acuan <b>${targetRisk}%</b> modal Anda.</i>`;
+        const customButtons2 = [
+          [{ text: "\u{1F9EE} Hitung Lot Sekarang", callback_data: "cmd_lot" }],
+          [{ text: "\u{1F4F1} Buka Menu Utama", callback_data: "cmd_menu" }]
+        ];
+        return sendOrEdit(ctx, successMsg, false, customButtons2);
+      }
+      const currentRisk = user.default_risk !== void 0 && user.default_risk !== null && !isNaN(Number(user.default_risk)) ? Number(user.default_risk) : 2.5;
+      const equityData = await getUserEquityData(user.id, user);
+      const eq = equityData.currentEquity;
+      const nominalCurrent = eq * currentRisk / 100;
+      const msg = `\u{1F6E1}\uFE0F <b>PENGATURAN TOLERANSI RISIKO (/setrisk)</b>
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
+\u{1F464} Akun: <b>${user.username}</b>
+\u{1F3AF} Toleransi Saat Ini: <b>${currentRisk}% per trade</b>
+\u{1F4B5} Maksimal Loss per Trade: <b>$${nominalCurrent.toFixed(2)}</b> (Equity: $${eq.toFixed(2)})
+
+Pilih persentase risiko cepat di bawah, atau ketik langsung:
+<code>/setrisk [persen]</code> (contoh: <code>/setrisk 1.5</code>)`;
+      const customButtons = [
+        [
+          { text: "\u{1F6E1}\uFE0F 0.5% (Sangat Aman)", callback_data: "setrisk_0.5" },
+          { text: "\u{1F6E1}\uFE0F 1.0% (Konservatif)", callback_data: "setrisk_1.0" }
+        ],
+        [
+          { text: "\u{1F6E1}\uFE0F 1.5% (Disiplin)", callback_data: "setrisk_1.5" },
+          { text: "\u{1F6E1}\uFE0F 2.0% (Standar Forex)", callback_data: "setrisk_2.0" }
+        ],
+        [
+          { text: "\u{1F6E1}\uFE0F 2.5% (Agresif Terukur)", callback_data: "setrisk_2.5" },
+          { text: "\u{1F6E1}\uFE0F 3.0% (Maksimal)", callback_data: "setrisk_3.0" }
+        ]
+      ];
+      await sendOrEdit(ctx, msg, true, customButtons);
+    } catch (e) {
+      console.error("handleSetRisk error:", e);
+      await ctx.reply("Terjadi kesalahan saat mengatur toleransi risiko.");
+    }
+  };
+  bot2.command("setrisk", (ctx) => handleSetRisk(ctx));
+  bot2.action("cmd_setrisk_menu", (ctx) => handleSetRisk(ctx));
+  bot2.action(/^setrisk_(\d+(?:\.\d+)?)$/, async (ctx) => {
+    const val = parseFloat(ctx.match[1]);
+    await handleSetRisk(ctx, val);
+  });
+  const handleNews = async (ctx, filterMode = "high") => {
+    try {
+      const text = (ctx.message?.text || "").trim();
+      const parts = text.split(/\s+/);
+      let mode = filterMode;
+      if (parts.length > 1) {
+        const arg = parts[1].toLowerCase();
+        if (arg === "today" || arg === "hariini") mode = "today";
+        else if (arg === "usd" || arg === "gold" || arg === "xau") mode = "usd";
+        else if (arg === "all" || arg === "semua") mode = "all";
+        else if (arg === "high") mode = "high";
+      }
+      const allEvents = await fetchForexNews(filterMode === "all");
+      if (!allEvents || allEvents.length === 0) {
+        const fallbackMsg = `\u{1F4F0} <b>KALENDER FOREX & JADWAL SESI TRADING</b>
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
+\u26A0\uFE0F <i>Data kalender eksternal sedang dalam pembaruan. Jadwal Sesi Utama (WIB):</i>
+
+\u{1F30F} <b>Sesi Tokyo (Asia):</b> 07:00 - 16:00 WIB
+\u{1F1EC}\u{1F1E7} <b>Sesi London (Eropa):</b> 14:00 - 23:00 WIB
+\u{1F1FA}\u{1F1F8} <b>Sesi New York (US):</b> 19:00 - 04:00 WIB
+
+\u{1F525} <i>Waktu Overlap Volatilitas Tertinggi: 19:00 - 23:00 WIB</i>`;
+        return sendOrEdit(ctx, fallbackMsg, true);
+      }
+      const now = /* @__PURE__ */ new Date();
+      const todayStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta" }).format(now);
+      let filtered = allEvents.filter((ev) => {
+        const evDate = new Date(ev.date);
+        const evDateStr = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta" }).format(evDate);
+        if (mode === "today") {
+          return evDateStr === todayStr && (ev.impact === "High" || ev.impact === "Medium");
+        } else if (mode === "usd") {
+          return ev.country.toUpperCase() === "USD" && (ev.impact === "High" || ev.impact === "Medium");
+        } else if (mode === "all") {
+          return true;
+        } else {
+          return ev.impact === "High";
+        }
+      });
+      let fallbackNote = "";
+      if (filtered.length === 0) {
+        if (mode === "today") {
+          fallbackNote = "<i>(Event High/Med hari ini sudah selesai atau libur. Menampilkan High-Impact terdekat:)</i>\n";
+          filtered = allEvents.filter((ev) => ev.impact === "High").slice(0, 7);
+        } else {
+          filtered = allEvents.slice(0, 8);
+        }
+      }
+      const displayEvents = filtered.slice(0, 8);
+      const modeTitle = mode === "today" ? "\u{1F4C5} HARI INI" : mode === "usd" ? "\u{1F1FA}\u{1F1F8} USD & GOLD IMPACT" : mode === "all" ? "\u{1F310} SEMUA BERITA" : "\u{1F525} HIGH IMPACT ONLY";
+      let msg = `\u{1F4F0} <b>KALENDER FOREX & ECONOMIC NEWS</b>
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
+Filter: <b>${modeTitle}</b> | Waktu: <b>WIB (UTC+7)</b>
+` + (fallbackNote ? `${fallbackNote}
+` : "\n");
+      displayEvents.forEach((item) => {
+        const evDate = new Date(item.date);
+        const dateStr = evDate.toLocaleDateString("id-ID", { weekday: "short", day: "numeric", month: "short", timeZone: "Asia/Jakarta" });
+        const timeStr = evDate.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Jakarta" }).replace(".", ":");
+        const flag = getCurrencyFlag(item.country);
+        const badge = getNewsImpactBadge(item.impact);
+        msg += `\u{1F4C5} <b>${dateStr}</b> - <b>${timeStr} WIB</b>
+${flag} <b>${item.country}</b> | ${badge}
+\u{1F4CC} <b>${item.title}</b>
+`;
+        if (item.forecast || item.previous) {
+          msg += `   <i>Forecast: ${item.forecast || "-"} | Prev: ${item.previous || "-"}</i>
+`;
+        }
+        msg += `
+`;
+      });
+      msg += `\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
+<i>\u26A0\uFE0F Waspadai lonjakan spread & slippage menjelang berita High Impact dirilis!</i>`;
+      const customButtons = [
+        [
+          { text: "\u{1F525} High Impact", callback_data: "news_high" },
+          { text: "\u{1F4C5} Hari Ini", callback_data: "news_today" }
+        ],
+        [
+          { text: "\u{1F1FA}\u{1F1F8} USD Saja (Gold)", callback_data: "news_usd" },
+          { text: "\u{1F310} Semua Berita", callback_data: "news_all" }
+        ],
+        [
+          { text: "\u{1F504} Refresh News", callback_data: "news_refresh" }
+        ]
+      ];
+      await sendOrEdit(ctx, msg, true, customButtons);
+    } catch (err) {
+      console.error("handleNews error:", err);
+      await ctx.reply("Terjadi kesalahan memuat berita forex.");
+    }
+  };
+  bot2.command("news", (ctx) => handleNews(ctx, "high"));
+  bot2.action("cmd_news", (ctx) => handleNews(ctx, "high"));
+  bot2.action("news_high", (ctx) => handleNews(ctx, "high"));
+  bot2.action("news_today", (ctx) => handleNews(ctx, "today"));
+  bot2.action("news_usd", (ctx) => handleNews(ctx, "usd"));
+  bot2.action("news_all", (ctx) => handleNews(ctx, "all"));
+  bot2.action("news_refresh", async (ctx) => {
+    cachedNews = null;
+    await handleNews(ctx, "high");
+  });
   bot2.command(["deposit", "topup"], async (ctx) => {
     try {
       const parts = ctx.message.text.trim().split(/\s+/);
@@ -1350,41 +1714,92 @@ Account Equity: <b>$${eq.toFixed(2)}</b>
       await ctx.reply("\u274C Gagal memproses penarikan saldo.");
     }
   });
-  bot2.command(["setbalance", "setsaldo"], async (ctx) => {
+  const handleSetModal = async (ctx, presetAmount) => {
     try {
-      const parts = ctx.message.text.trim().split(/\s+/);
-      if (parts.length < 2) {
-        return ctx.reply("\u274C Format salah.\nGunakan: <code>/setbalance [jumlah]</code>\nContoh: <code>/setbalance 10000</code>", { parse_mode: "HTML" });
-      }
-      const amount = parseFloat(parts[1].replace(/,/g, ""));
-      if (isNaN(amount) || amount <= 0) {
-        return ctx.reply("\u274C Jumlah saldo modal harus lebih dari 0.");
-      }
       const telegramId = ctx.from?.id?.toString();
       const user = await getActiveUser(telegramId, ctx.from?.username);
       if (!user) return sendUnlinkedPrompt(ctx);
-      if (user.prop_firm_enabled) {
-        await db2.execute({
-          sql: "UPDATE users SET prop_firm_balance = ? WHERE id = ?",
-          args: [amount, user.id]
-        });
-      } else {
-        await db2.execute({
-          sql: "UPDATE users SET initial_balance = ? WHERE id = ?",
-          args: [amount, user.id]
-        });
+      let amount = presetAmount;
+      if (amount === void 0) {
+        const text = (ctx.message?.text || "").trim();
+        const parts = text.split(/\s+/);
+        if (parts.length > 1) {
+          const parsed = parseFloat(parts[1].replace(/,/g, ""));
+          if (!isNaN(parsed) && parsed > 0) {
+            amount = parsed;
+          }
+        }
       }
-      const s = await getUserEquityData(user.id, user);
-      const msg = `\u{1F3AF} <b>[MODAL AWAL DIPERBARUI]</b>
+      const isCent = user.currency === "USC" || user.currency === "NANO";
+      const sym = isCent ? "\xA2" : user.currency === "IDR" ? "Rp " : "$";
+      if (amount !== void 0 && !isNaN(amount) && amount > 0) {
+        if (user.prop_firm_enabled) {
+          await db2.execute({
+            sql: "UPDATE users SET prop_firm_balance = ? WHERE id = ?",
+            args: [amount, user.id]
+          });
+          user.prop_firm_balance = amount;
+        } else {
+          await db2.execute({
+            sql: "UPDATE users SET initial_balance = ? WHERE id = ?",
+            args: [amount, user.id]
+          });
+          user.initial_balance = amount;
+        }
+        const s2 = await getUserEquityData(user.id, user);
+        const msg2 = `\u{1F3AF} <b>[MODAL AWAL BERHASIL DIPERBARUI]</b>
 \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
 \u{1F464} Akun: <code>${user.username}</code>
-\u{1F4B0} Modal Baru: <b>$${amount.toLocaleString("en-US", { minimumFractionDigits: 2 })}</b>
-\u26A1 Current Equity: <b>$${s.currentEquity.toFixed(2)}</b>`;
-      await ctx.reply(msg, { parse_mode: "HTML" });
+\u{1F4B0} Modal Baru: <b>${sym}${amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</b>
+\u26A1 Current Equity: <b>${sym}${s2.currentEquity.toFixed(2)}</b>
+
+\u{1F4A1} <i>Kini kalkulasi drawdown, performa akun, dan kalkulator <code>/lot</code> menggunakan modal awal ini.</i>`;
+        const btns = [
+          [{ text: "\u{1F4B0} Cek Saldo & Equity", callback_data: "cmd_saldo" }],
+          [{ text: "\u{1F9EE} Hitung Lot (/lot)", callback_data: "cmd_lot" }],
+          [{ text: "\u{1F4F1} Menu Utama", callback_data: "cmd_menu" }]
+        ];
+        return sendOrEdit(ctx, msg2, false, btns);
+      }
+      const currentInitial = user.prop_firm_enabled ? user.prop_firm_balance || 1e3 : user.initial_balance || 1e4;
+      const s = await getUserEquityData(user.id, user);
+      const msg = `\u{1F4B0} <b>ATUR MODAL AWAL AKUN (/setmodal)</b>
+\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
+\u{1F464} Akun: <code>${user.username}</code>
+\u{1F4B5} Modal Awal Saat Ini: <b>${sym}${Number(currentInitial).toLocaleString("en-US", { minimumFractionDigits: 2 })}</b>
+\u26A1 Current Equity: <b>${sym}${s.currentEquity.toFixed(2)}</b>
+
+Pilih nominal modal awal cepat di bawah atau ketik:
+<code>/setmodal [jumlah]</code>
+
+<i>Contoh:</i>
+\u2022 <code>/setmodal 10000</code>
+\u2022 <code>/setmodal 5000</code>
+\u2022 <code>/setmodal 100</code>`;
+      const presets = isCent ? [1e3, 5e3, 1e4, 5e4, 1e5, 5e5] : [500, 1e3, 5e3, 1e4, 25e3, 5e4, 1e5, 2e5];
+      const presetRows = [];
+      let currentRow = [];
+      presets.forEach((val) => {
+        const label = `${sym}${val >= 1e3 ? `${val / 1e3}k` : val}`;
+        currentRow.push(Markup.button.callback(label, `cmd_setmodal_${val}`));
+        if (currentRow.length === 3) {
+          presetRows.push(currentRow);
+          currentRow = [];
+        }
+      });
+      if (currentRow.length > 0) presetRows.push(currentRow);
+      presetRows.push([Markup.button.callback("\u{1F4F1} Kembali ke Menu", "cmd_menu")]);
+      return sendOrEdit(ctx, msg, false, presetRows);
     } catch (e) {
       console.error(e);
-      await ctx.reply("\u274C Gagal mengubah modal saldo.");
+      await ctx.reply("\u274C Gagal mengubah modal awal.");
     }
+  };
+  bot2.command(["setmodal", "setbalance", "setsaldo"], (ctx) => handleSetModal(ctx));
+  bot2.action("cmd_setmodal", (ctx) => handleSetModal(ctx));
+  bot2.action(/^cmd_setmodal_(\d+)$/, (ctx) => {
+    const val = parseFloat(ctx.match[1]);
+    return handleSetModal(ctx, val);
   });
   const handleUndo = async (ctx) => {
     try {
@@ -1636,8 +2051,13 @@ Selamat datang, <b>${user.username}</b>.`, { parse_mode: "HTML" });
 `;
     if (user) {
       const s = await getUserEquityData(user.id, user);
+      const isNano = user.currency === "NANO";
+      const isCent = user.currency === "USC";
+      const typeLabel = isNano ? "Nano (1\xA2/lot)" : isCent ? "Cent (10\xA2/lot)" : "Standard ($10/lot)";
+      const unitSym = isNano ? "\xA2" : isCent ? "\xA2" : "$";
       msg += `\u{1F464} Akun: <code>${user.username}</code> | Mode: <code>${user.current_mode || "backtest"}</code>
-\u{1F4B0} Equity: <b>$${s.currentEquity.toFixed(2)}</b> | WR: <b>${s.winRate}%</b>
+\u{1F3F7}\uFE0F Tipe Akun: <b>${typeLabel}</b> | WR: <b>${s.winRate}%</b>
+\u{1F4B0} Equity: <b>${unitSym}${s.currentEquity.toFixed(2)}</b>
 
 `;
     } else {
@@ -1650,7 +2070,9 @@ Selamat datang, <b>${user.username}</b>.`, { parse_mode: "HTML" });
       [Markup.button.callback("\u{1F4DD} Jurnal Trade Baru", "cmd_start_journal"), Markup.button.callback("\u{1F4B0} Cek Saldo & Equity", "cmd_saldo")],
       [Markup.button.callback("\u{1F4CA} Hari Ini (Today)", "cmd_today"), Markup.button.callback("\u{1F4C8} 7 Hari (Weekly)", "cmd_weekly")],
       [Markup.button.callback("\u{1F9EE} Kalkulator Lot", "cmd_lot"), Markup.button.callback("\u23F3 Trade Running", "cmd_running")],
-      [Markup.button.callback("\u{1F465} Kelola Akun", "cmd_accounts"), Markup.button.callback("\u{1F4A1} Bantuan & Panduan", "cmd_help")]
+      [Markup.button.callback("\u{1F4F0} Berita Pasar (News)", "cmd_news"), Markup.button.callback("\u{1F6E1}\uFE0F Set Toleransi Risiko", "cmd_setrisk_menu")],
+      [Markup.button.callback("\u{1F3F7}\uFE0F Ganti Tipe Akun", "cmd_setaccount"), Markup.button.callback("\u{1F465} Kelola Akun", "cmd_accounts")],
+      [Markup.button.callback("\u{1F4A1} Bantuan & Panduan", "cmd_help")]
     ]);
     if (ctx.callbackQuery) {
       await ctx.editMessageText(msg, { parse_mode: "HTML", ...keyboard }).catch(() => ctx.reply(msg, { parse_mode: "HTML", ...keyboard }));
@@ -1676,26 +2098,31 @@ Selamat datang, <b>${user.username}</b>.`, { parse_mode: "HTML" });
 \u2022 <code>/close [id] [win/loss] [pnl]</code> - Tutup trade terbuka
 \u2022 <code>/undo</code> - Batalkan/hapus trade terakhir jika salah input
 
-<b>2. KEUANGAN & PERFORMA:</b>
+<b>2. TOOLS & RISK MANAGEMENT:</b>
+\u2022 <code>/news</code> - Kalender ekonomi Forex & rilis berita High-Impact
+  <i>Opsi:</i> <code>/news today</code>, <code>/news usd</code>, <code>/news high</code>, <code>/news all</code>
+\u2022 <code>/setrisk [persen]</code> - Atur toleransi risiko per trade (cth: <code>/setrisk 1.5</code>)
+\u2022 <code>/setaccount [nano/cent/standard]</code> - Ganti tipe akun: Standard ($10), Cent (10\xA2), atau Nano (1\xA2/lot)
+\u2022 <code>/lot [pips]</code> - Hitung lot optimal berdasarkan toleransi risiko akun
+
+<b>3. KEUANGAN & PERFORMA:</b>
 \u2022 <code>/saldo</code> - Cek modal awal, penarikan & current equity
 \u2022 <code>/today</code> - Statistik trade hari ini (Win rate & P/L)
 \u2022 <code>/weekly</code> - Statistik performa 7 hari terakhir
-\u2022 <code>/lot [pips]</code> - Hitung lot optimal berdasarkan risiko
 \u2022 <code>/deposit [jumlah]</code> - Catat deposit saldo
 \u2022 <code>/wd [jumlah]</code> - Catat penarikan keuntungan
-\u2022 <code>/setbalance [jumlah]</code> - Setel modal awal
+\u2022 <code>/setmodal [jumlah]</code> - Setel modal awal akun (cth: <code>/setmodal 10000</code>)
 
-<b>3. MANAJEMEN AKUN:</b>
+<b>4. MANAJEMEN AKUN:</b>
 \u2022 <code>/menu</code> - Buka Control Panel navigasi utama
 \u2022 <code>/accounts</code> - Daftar akun multi-user
 \u2022 <code>/switch [username]</code> - Ganti akun aktif
 \u2022 <code>/link [username]</code> - Tautkan akun Telegram
 
-<b>4. SCREENSHOT & GAMBAR ENTRY:</b>
-\u2022 <b>Kirim Foto + Caption:</b> Kirim gambar chart dengan caption:
-  <code>XAUUSD BUY 0.10 +150 WIN Setup Retest</code>
+<b>5. SCREENSHOT & GAMBAR ENTRY:</b>
+\u2022 <b>Kirim Foto + Caption:</b> Kirim chart dengan caption: <code>XAUUSD BUY 0.10 +150 WIN Setup Retest</code>
 \u2022 <b>Kirim Foto Langsung:</b> Kirim foto tanpa caption, lalu klik tombol <i>[Catat Jurnal dengan Foto Ini]</i>
-\u2022 <b>Wizard /jurnal:</b> Di langkah akhir wizard, kirim foto chart atau klik Lewati
+\u2022 <b>Wizard /jurnal:</b> Di langkah akhir wizard, kirim foto chart Anda
 \u2022 <b>TradingView Link:</b> Sertakan link snapshot di /quick (cth: <code>https://tradingview.com/x/...</code>)`;
     await sendOrEdit(ctx, helpMsg, true);
   };
@@ -1855,7 +2282,7 @@ Ketik <code>/menu</code> untuk membuka Control Panel atau <code>/help</code> unt
             ]
           });
           const s = await getUserEquityData(actualUserId, user2);
-          const pipsGained = calculatePips(pair, entryPrice, tpPrice, realizedPl, lotSize, isWin);
+          const pipsGained = calculatePips(pair, entryPrice, tpPrice, realizedPl, lotSize, isWin, user2?.currency === "NANO");
           const sign = realizedPl >= 0 ? "+" : "";
           let msg = `\u{1F4CA} <b>[TRADE CSV RECORDED]</b>
 \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501
@@ -2026,7 +2453,7 @@ Pilih cara mencatat trade untuk screenshot ini:
       if (pnl > 0 && result !== "Pending") result = "WIN";
       if (pnl < 0) result = "LOSS";
       const isWin = result.toUpperCase() === "WIN";
-      const pips = calculatePips(pair, entry, tp, pnl, lot, isWin);
+      const pips = calculatePips(pair, entry, tp, pnl, lot, isWin, user?.currency === "NANO");
       const ins = await db2.execute({
         sql: `INSERT INTO trades (
           user_id, pair, direction, setup_name, entry_price, sl, tp, 
@@ -2291,6 +2718,10 @@ async function initDb() {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    try {
+      await db.execute("ALTER TABLE users ADD COLUMN default_risk REAL DEFAULT 2.5");
+    } catch (_) {
+    }
     await db.execute(`
       CREATE TABLE IF NOT EXISTS transactions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2417,21 +2848,8 @@ var adminMiddleware = (req, res, next) => {
   }
   next();
 };
-app.get("/api/auth/invite-hint", async (req, res) => {
-  try {
-    const active = await db.execute("SELECT code FROM invite_codes WHERE is_used = 0 LIMIT 1");
-    if (active.rows.length > 0) {
-      return res.json({ available_code: active.rows[0].code });
-    }
-    const newCode = "TRADER" + Math.floor(1e3 + Math.random() * 9e3);
-    await db.execute({
-      sql: "INSERT OR IGNORE INTO invite_codes (code, is_used) VALUES (?, 0)",
-      args: [newCode]
-    });
-    res.json({ available_code: newCode });
-  } catch (e) {
-    res.json({ available_code: "WUCXB1WV" });
-  }
+app.get("/api/auth/invite-hint", (req, res) => {
+  res.status(403).json({ error: "Kode khusus pendaftaran hanya diterbitkan oleh Admin di Akun Admin." });
 });
 app.post("/api/auth/register", async (req, res) => {
   try {
@@ -2447,15 +2865,26 @@ app.post("/api/auth/register", async (req, res) => {
     if (cleanPassword.length < 4) {
       return res.status(400).json({ error: "Password minimal 4 karakter." });
     }
-    if (inviteCode && String(inviteCode).trim()) {
-      const cleanInvite = String(inviteCode).trim().toUpperCase();
-      try {
-        await db.execute({
-          sql: "UPDATE invite_codes SET is_used = 1, used_by = ? WHERE UPPER(code) = ?",
-          args: [cleanUsername, cleanInvite]
-        });
-      } catch (err) {
-      }
+    if (!inviteCode || !String(inviteCode).trim()) {
+      return res.status(400).json({
+        error: "Kode khusus dari Admin wajib diisi. Silakan hubungi Admin untuk mendapatkan kode akses pendaftaran agar terhindar dari spam."
+      });
+    }
+    const cleanInvite = String(inviteCode).trim().toUpperCase();
+    const codeCheck = await db.execute({
+      sql: "SELECT code, is_used, used_by FROM invite_codes WHERE UPPER(code) = ?",
+      args: [cleanInvite]
+    });
+    if (codeCheck.rows.length === 0) {
+      return res.status(400).json({
+        error: "Kode khusus pendaftaran tidak valid. Silakan hubungi Admin untuk meminta kode akses pendaftaran yang sah."
+      });
+    }
+    const codeRow = codeCheck.rows[0];
+    if (codeRow.is_used) {
+      return res.status(400).json({
+        error: `Kode khusus "${cleanInvite}" sudah pernah digunakan. Setiap kode hanya berlaku untuk 1 akun. Silakan hubungi Admin.`
+      });
     }
     const hash = bcrypt2.hashSync(cleanPassword, 10);
     let userId;
@@ -2475,15 +2904,10 @@ app.post("/api/auth/register", async (req, res) => {
       });
       userId = u.rows[0]?.id;
     }
-    if (inviteCode && String(inviteCode).trim()) {
-      try {
-        await db.execute({
-          sql: "UPDATE invite_codes SET is_used = 1, used_by = ? WHERE UPPER(code) = ?",
-          args: [cleanUsername, String(inviteCode).trim().toUpperCase()]
-        });
-      } catch (err) {
-      }
-    }
+    await db.execute({
+      sql: "UPDATE invite_codes SET is_used = 1, used_by = ? WHERE UPPER(code) = ?",
+      args: [cleanUsername, cleanInvite]
+    });
     const token = jwt.sign({ id: userId, username: cleanUsername, role: "user" }, JWT_SECRET, { expiresIn: "30d" });
     const isHttps = req.headers?.["x-forwarded-proto"] === "https" || Boolean(req.connection?.encrypted) || Boolean(req.socket?.encrypted);
     res.cookie("token", token, {
@@ -2572,7 +2996,7 @@ app.post("/api/auth/login", async (req, res) => {
 app.get("/api/auth/me", authMiddleware, async (req, res) => {
   try {
     const userRes = await db.execute({
-      sql: "SELECT id, username, role, current_mode, currency, prop_firm_enabled, prop_firm_balance, prop_firm_daily_dd, prop_firm_max_dd, prop_firm_target, prop_firm_payout_total, initial_balance, myfxbook_session, telegram_id, telegram_tag, coins, active_character_id FROM users WHERE id = ?",
+      sql: "SELECT id, username, role, current_mode, currency, default_risk, prop_firm_enabled, prop_firm_balance, prop_firm_daily_dd, prop_firm_max_dd, prop_firm_target, prop_firm_payout_total, initial_balance, myfxbook_session, telegram_id, telegram_tag, coins, active_character_id FROM users WHERE id = ?",
       args: [req.user.id]
     });
     if (userRes.rows.length === 0) return res.status(401).json({ error: "Unauthorized" });
@@ -2583,6 +3007,7 @@ app.get("/api/auth/me", authMiddleware, async (req, res) => {
       role: user.role,
       current_mode: user.current_mode || "backtest",
       currency: user.currency || "USD",
+      default_risk: user.default_risk !== void 0 && user.default_risk !== null ? Number(user.default_risk) : 2.5,
       prop_firm_enabled: Boolean(user.prop_firm_enabled),
       prop_firm_balance: user.prop_firm_balance || 1e3,
       initial_balance: user.initial_balance,
@@ -2629,7 +3054,7 @@ app.post("/api/auth/telegram-tag", authMiddleware, async (req, res) => {
 app.post("/api/auth/currency", authMiddleware, async (req, res) => {
   try {
     const { currency } = req.body;
-    if (!["USD", "USC", "IDR"].includes(currency)) {
+    if (!["USD", "USC", "NANO", "IDR"].includes(currency)) {
       return res.status(400).json({ error: "Invalid currency" });
     }
     await db.execute({
@@ -2712,15 +3137,40 @@ app.get("/api/admin/invites", authMiddleware, adminMiddleware, async (req, res) 
 });
 app.post("/api/admin/invites", authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const code = Math.random().toString(36).substring(2, 10).toUpperCase();
+    const { customCode } = req.body || {};
+    let code = customCode && String(customCode).trim() ? String(customCode).trim().toUpperCase() : "TRADER" + Math.floor(1e3 + Math.random() * 9e3);
+    code = code.replace(/[^A-Z0-9_-]/g, "");
+    if (code.length < 3) {
+      return res.status(400).json({ error: "Kode khusus minimal 3 karakter." });
+    }
+    const existing = await db.execute({
+      sql: "SELECT code FROM invite_codes WHERE UPPER(code) = UPPER(?)",
+      args: [code]
+    });
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ error: `Kode "${code}" sudah terdaftar.` });
+    }
     await db.execute({
-      sql: "INSERT INTO invite_codes (code) VALUES (?)",
+      sql: "INSERT INTO invite_codes (code, is_used) VALUES (?, 0)",
       args: [code]
     });
     res.json({ success: true, code });
   } catch (e) {
     console.error(e);
-    res.status(500).json({ error: "Server error" });
+    res.status(500).json({ error: e?.message || "Server error" });
+  }
+});
+app.delete("/api/admin/invites/:code", authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const code = String(req.params.code).trim().toUpperCase();
+    await db.execute({
+      sql: "DELETE FROM invite_codes WHERE UPPER(code) = UPPER(?)",
+      args: [code]
+    });
+    res.json({ success: true, message: `Kode "${code}" berhasil dihapus.` });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: e?.message || "Server error" });
   }
 });
 app.get("/api/admin/users", authMiddleware, adminMiddleware, async (req, res) => {
@@ -2747,6 +3197,47 @@ app.post("/api/admin/users/:id/password", authMiddleware, adminMiddleware, async
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Server error" });
+  }
+});
+app.delete("/api/admin/users/:id", authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const targetId = Number(req.params.id);
+    if (!targetId || isNaN(targetId)) {
+      return res.status(400).json({ error: "ID pengguna tidak valid." });
+    }
+    if (targetId === Number(req.user.id)) {
+      return res.status(400).json({ error: "Tidak dapat menghapus akun Anda sendiri." });
+    }
+    const check = await db.execute({
+      sql: "SELECT id, username, role FROM users WHERE id = ?",
+      args: [targetId]
+    });
+    if (check.rows.length === 0) {
+      return res.status(404).json({ error: "Pengguna tidak ditemukan." });
+    }
+    const targetUser = check.rows[0];
+    if (targetUser.role === "admin" || targetUser.username?.toLowerCase() === "singga" || targetUser.username?.toLowerCase() === "aurel") {
+      return res.status(403).json({ error: "Akun administrator tidak dapat dihapus. Hanya akun biasa yang dapat dihapus." });
+    }
+    await db.execute({ sql: "DELETE FROM trades WHERE user_id = ?", args: [targetId] }).catch(() => {
+    });
+    await db.execute({ sql: "DELETE FROM transactions WHERE user_id = ?", args: [targetId] }).catch(() => {
+    });
+    await db.execute({ sql: "DELETE FROM telegram_accounts WHERE user_id = ?", args: [targetId] }).catch(() => {
+    });
+    await db.execute({ sql: "DELETE FROM telegram_sessions WHERE active_user_id = ?", args: [targetId] }).catch(() => {
+    });
+    await db.execute({ sql: "DELETE FROM user_characters WHERE user_id = ?", args: [targetId] }).catch(() => {
+    });
+    await db.execute({ sql: "DELETE FROM user_quests WHERE user_id = ?", args: [targetId] }).catch(() => {
+    });
+    await db.execute({ sql: "UPDATE invite_codes SET is_used = 0, used_by = NULL WHERE used_by = ?", args: [targetUser.username] }).catch(() => {
+    });
+    await db.execute({ sql: "DELETE FROM users WHERE id = ?", args: [targetId] });
+    res.json({ success: true, message: `Akun pengguna "${targetUser.username}" berhasil dihapus secara permanen.` });
+  } catch (e) {
+    console.error("Delete user error:", e);
+    res.status(500).json({ error: "Gagal menghapus user dari database." });
   }
 });
 app.post("/api/trades/bulk", authMiddleware, async (req, res) => {

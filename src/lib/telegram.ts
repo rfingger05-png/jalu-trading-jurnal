@@ -293,25 +293,26 @@ export function initTelegramBot(db: any) {
     // Register clean, organized command list to Telegram's built-in command menu
     bot.telegram.setMyCommands([
       { command: 'menu', description: '📱 Buka Control Panel navigasi interaktif' },
-      { command: 'jurnal', description: '📝 Jurnal trade interaktif langkah demi langkah' },
-      { command: 'quick', description: '⚡ Catat trade 1 baris cepat: /quick [pair] [buy/sell] [lot] [p/l]' },
-      { command: 'buy', description: '🟢 Shortcut catat posisi BUY: /buy [pair] [lot] [p/l]' },
-      { command: 'sell', description: '🔴 Shortcut catat posisi SELL: /sell [pair] [lot] [p/l]' },
-      { command: 'running', description: '⏳ Lihat daftar trade terbuka / pending order' },
-      { command: 'close', description: '✅ Tutup trade running: /close [id] [win/loss] [p/l]' },
-      { command: 'saldo', description: '💰 Cek saldo modal, equity & status drawdown' },
-      { command: 'today', description: '📊 Rekap statistik performa hari ini' },
-      { command: 'weekly', description: '📈 Rekap performa 7 hari terakhir' },
-      { command: 'lot', description: '🧮 Hitung lot otomatis berdasarkan toleransi risiko' },
-      { command: 'news', description: '📰 Kalender ekonomi Forex & berita pasar high-impact' },
-      { command: 'setrisk', description: '🛡️ Atur toleransi risiko per trade: /setrisk [persen]' },
-      { command: 'setaccount', description: '🏷️ Pilih tipe akun: Standard ($), Cent (¢), atau Nano (¢)' },
-      { command: 'setmodal', description: '💰 Setel modal awal akun: /setmodal [jumlah]' },
-      { command: 'deposit', description: '📥 Catat deposit saldo: /deposit [jumlah]' },
-      { command: 'wd', description: '📤 Catat penarikan keuntungan: /wd [jumlah]' },
+      { command: 'help', description: '💡 Panduan lengkap & daftar semua perintah' },
+      { command: 'jurnal', description: '📝 Wizard catat trade langkah demi langkah' },
+      { command: 'quick', description: '⚡ Catat trade 1 baris: /quick [pair] [buy/sell] [lot] [pnl]' },
+      { command: 'buy', description: '🟢 Shortcut catat posisi BUY instan: /buy [pair] [lot] [pnl]' },
+      { command: 'sell', description: '🔴 Shortcut catat posisi SELL instan: /sell [pair] [lot] [pnl]' },
+      { command: 'running', description: '⏳ Daftar trade terbuka / pending order' },
+      { command: 'close', description: '✅ Tutup trade running: /close [id] [win/loss] [pnl]' },
       { command: 'undo', description: '↩️ Batalkan/hapus trade terakhir' },
+      { command: 'saldo', description: '💰 Cek saldo modal, equity & status drawdown' },
+      { command: 'today', description: '📊 Rekap performa trade hari ini' },
+      { command: 'weekly', description: '📈 Rekap performa 7 hari terakhir' },
+      { command: 'setmodal', description: '💵 Setel modal awal akun: /setmodal [jumlah]' },
+      { command: 'deposit', description: '📥 Catat deposit saldo: /deposit [jumlah]' },
+      { command: 'wd', description: '📤 Catat penarikan profit: /wd [jumlah]' },
+      { command: 'lot', description: '🧮 Hitung lot otomatis sesuai toleransi risiko' },
+      { command: 'setrisk', description: '🛡️ Atur toleransi risiko per trade: /setrisk [%]' },
+      { command: 'setaccount', description: '🏷️ Pilih tipe akun: Standard ($), Cent (¢), atau Nano (¢)' },
+      { command: 'news', description: '📰 Kalender ekonomi Forex & rilis berita' },
       { command: 'accounts', description: '👥 Kelola akun multi-user & ganti akun' },
-      { command: 'help', description: '💡 Panduan lengkap semua perintah' }
+      { command: 'reset', description: '⚠️ Reset total data akun (trade log & saldo)' }
     ]).catch((cmdErr: any) => {
       console.warn('⚠️ Could not set Telegram commands:', cmdErr?.message || cmdErr);
     });
@@ -2090,6 +2091,110 @@ export function initTelegramBot(db: any) {
   bot.command('undo', handleUndo);
   bot.action('cmd_undo', handleUndo);
 
+  // COMMAND: /reset - Reset all account data (trades, depo/wd, quests)
+  const handleResetPrompt = async (ctx: any) => {
+    try {
+      const telegramId = ctx.from?.id?.toString();
+      const user = await getActiveUser(telegramId, ctx.from?.username);
+      if (!user) return sendUnlinkedPrompt(ctx);
+
+      const text = (ctx.message?.text || '').trim();
+      const isForce = text.includes('confirm') || text.includes('force') || text.includes('ya');
+
+      if (isForce) {
+        return handleResetExecute(ctx, user);
+      }
+
+      const tradeCountRes = await db.execute({
+        sql: "SELECT COUNT(*) as cnt FROM trades WHERE user_id = ?",
+        args: [user.id]
+      });
+      const tradeCount = Number((tradeCountRes.rows[0] as any)?.cnt || 0);
+
+      const txCountRes = await db.execute({
+        sql: "SELECT COUNT(*) as cnt FROM transactions WHERE user_id = ?",
+        args: [user.id]
+      });
+      const txCount = Number((txCountRes.rows[0] as any)?.cnt || 0);
+
+      const isCent = user.currency === 'USC' || user.currency === 'NANO';
+      const sym = isCent ? '¢' : (user.currency === 'IDR' ? 'Rp ' : '$');
+      const initial = user.prop_firm_enabled ? (user.prop_firm_balance || 1000) : (user.initial_balance || 10000);
+
+      const msg = `⚠️ <b>KONFIRMASI RESET TOTAL DATA AKUN</b>\n` +
+                  `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                  `👤 Akun: <code>${user.username}</code> (${user.currency || 'USD'})\n` +
+                  `💰 Modal Awal: <b>${sym}${initial.toLocaleString()}</b>\n\n` +
+                  `Tindakan ini akan <b>MENGHAPUS SEMUA DATA PERMANEN</b>:\n` +
+                  `• 📝 <b>${tradeCount}</b> Catatan Jurnal Trade\n` +
+                  `• 💳 <b>${txCount}</b> Riwayat Deposit & Penarikan Saldo\n` +
+                  `• 🎮 Seluruh Progres Quest & Karakter\n` +
+                  `• 🔄 Mengembalikan Saldo/Equity ke modal awal bersih\n\n` +
+                  `<i>⚠️ PERINGATAN: Tindakan ini TIDAK DAPAT DIBATALKAN!</i>\n` +
+                  `Apakah Anda yakin ingin mengosongkan seluruh data akun ini?`;
+
+      const btns = [
+        [{ text: '⚠️ YA, RESET SEMUA DATA SEKARANG', callback_data: `confirm_reset_${user.id}` }],
+        [{ text: '❌ BATALKAN', callback_data: 'cancel_reset' }],
+        [{ text: '📱 Kembali ke Menu Utama', callback_data: 'cmd_menu' }]
+      ];
+
+      return sendOrEdit(ctx, msg, false, btns);
+    } catch (e) {
+      console.error(e);
+      await ctx.reply('❌ Gagal memeriksa data akun untuk reset.');
+    }
+  };
+
+  const handleResetExecute = async (ctx: any, targetUser?: any) => {
+    try {
+      const telegramId = ctx.from?.id?.toString();
+      const user = targetUser || await getActiveUser(telegramId, ctx.from?.username);
+      if (!user) return sendUnlinkedPrompt(ctx);
+
+      // Delete trades, transactions, quests, characters for this user
+      await db.execute({ sql: "DELETE FROM trades WHERE user_id = ?", args: [user.id] }).catch(() => {});
+      await db.execute({ sql: "DELETE FROM transactions WHERE user_id = ?", args: [user.id] }).catch(() => {});
+      await db.execute({ sql: "DELETE FROM user_quests WHERE user_id = ?", args: [user.id] }).catch(() => {});
+      await db.execute({ sql: "DELETE FROM user_characters WHERE user_id = ?", args: [user.id] }).catch(() => {});
+
+      const isCent = user.currency === 'USC' || user.currency === 'NANO';
+      const sym = isCent ? '¢' : (user.currency === 'IDR' ? 'Rp ' : '$');
+      const initial = user.prop_firm_enabled ? (user.prop_firm_balance || 1000) : (user.initial_balance || 10000);
+
+      const msg = `✅ <b>DATA AKUN BERHASIL DI-RESET TOTAL!</b>\n` +
+                  `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                  `👤 Akun: <code>${user.username}</code>\n` +
+                  `• Riwayat Jurnal Trade: <b>0 (Kosong/Bersih)</b>\n` +
+                  `• Riwayat Deposit/WD: <b>0 (Kosong/Bersih)</b>\n` +
+                  `• Saldo/Equity: <b>${sym}${initial.toLocaleString()}</b> (Kembali ke Modal Awal)\n\n` +
+                  `Akun Anda kini siap digunakan untuk mencatat perjalanan trading baru dari lembaran bersih! ✨\n\n` +
+                  `💡 <i>Tips: Jika ingin mengatur modal awal baru, ketik:</i>\n` +
+                  `<code>/setmodal 10000</code>`;
+
+      const btns = [
+        [{ text: '📝 Mulai Catat Jurnal (/jurnal)', callback_data: 'cmd_start_journal' }],
+        [{ text: '💰 Cek Saldo (/saldo)', callback_data: 'cmd_saldo' }],
+        [{ text: '📱 Menu Utama', callback_data: 'cmd_menu' }]
+      ];
+
+      return sendOrEdit(ctx, msg, false, btns);
+    } catch (e) {
+      console.error(e);
+      await ctx.reply('❌ Gagal mereset data akun.');
+    }
+  };
+
+  bot.command(['reset', 'resetdata', 'cleardata'], handleResetPrompt);
+  bot.action('cmd_reset', handleResetPrompt);
+  bot.action(/^confirm_reset_(\d+)$/, handleResetExecute);
+  bot.action('cancel_reset', async (ctx: any) => {
+    await ctx.answerCbQuery('Reset dibatalkan').catch(() => {});
+    const msg = `❌ <b>RESET DATA DIBATALKAN</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nSeluruh data trade, saldo, dan riwayat akun Anda tetap aman tersimpan.`;
+    const btns = [[{ text: '📱 Menu Utama', callback_data: 'cmd_menu' }]];
+    return sendOrEdit(ctx, msg, false, btns);
+  });
+
   // COMMAND: /accounts & /switch
   const handleAccounts = async (ctx: any) => {
     try {
@@ -2369,9 +2474,10 @@ export function initTelegramBot(db: any) {
       [Markup.button.callback('📝 Jurnal Trade Baru', 'cmd_start_journal'), Markup.button.callback('💰 Cek Saldo & Equity', 'cmd_saldo')],
       [Markup.button.callback('📊 Hari Ini (Today)', 'cmd_today'), Markup.button.callback('📈 7 Hari (Weekly)', 'cmd_weekly')],
       [Markup.button.callback('🧮 Kalkulator Lot', 'cmd_lot'), Markup.button.callback('⏳ Trade Running', 'cmd_running')],
-      [Markup.button.callback('📰 Berita Pasar (News)', 'cmd_news'), Markup.button.callback('🛡️ Set Toleransi Risiko', 'cmd_setrisk_menu')],
-      [Markup.button.callback('🏷️ Ganti Tipe Akun', 'cmd_setaccount'), Markup.button.callback('👥 Kelola Akun', 'cmd_accounts')],
-      [Markup.button.callback('💡 Bantuan & Panduan', 'cmd_help')]
+      [Markup.button.callback('📰 Berita Pasar (News)', 'cmd_news'), Markup.button.callback('🛡️ Set Risiko %', 'cmd_setrisk_menu')],
+      [Markup.button.callback('💵 Set Modal Awal', 'cmd_setmodal'), Markup.button.callback('🏷️ Ganti Tipe Akun', 'cmd_setaccount')],
+      [Markup.button.callback('👥 Kelola Akun', 'cmd_accounts'), Markup.button.callback('⚠️ Reset Data Akun', 'cmd_reset')],
+      [Markup.button.callback('💡 Bantuan & Panduan Lengkap', 'cmd_help')]
     ]);
 
     if (ctx.callbackQuery) {
@@ -2386,42 +2492,48 @@ export function initTelegramBot(db: any) {
 
   // HELP COMMAND (/help, /bantuan)
   const handleHelp = async (ctx: any) => {
-    const helpMsg = `📖 <b>PANDUAN LENGKAP BOT JURNAL TRADING</b>\n` +
-                    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                    `<b>1. PENCATATAN TRADE (JOURNALING):</b>\n` +
-                    `• <code>/jurnal</code> - Wizard interaktif langkah demi langkah\n` +
-                    `• <code>/quick [pair] [buy/sell] [lot] [pnl]</code> - Catat trade 1 baris cepat\n` +
+    const helpMsg = `📖 <b>PANDUAN LENGKAP & DAFTAR COMMAND BOT</b>\n` +
+                    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+                    `📝 <b>1. PENCATATAN TRADE & JURNAL</b>\n` +
+                    `• <code>/jurnal</code> — Wizard interaktif catat trade langkah demi langkah\n` +
+                    `• <code>/quick [pair] [buy/sell] [lot] [pnl]</code> — Catat trade 1 baris cepat\n` +
                     `  <i>Contoh:</i> <code>/quick XAUUSD BUY 0.10 +150 WIN Setup FVG</code>\n` +
-                    `• <code>/buy [pair] [lot] [pnl]</code> - Shortcut BUY instan\n` +
+                    `• <code>/buy [pair] [lot] [pnl]</code> — Shortcut instan posisi BUY\n` +
                     `  <i>Contoh:</i> <code>/buy XAUUSD 0.05 +80</code>\n` +
-                    `• <code>/sell [pair] [lot] [pnl]</code> - Shortcut SELL instan\n` +
+                    `• <code>/sell [pair] [lot] [pnl]</code> — Shortcut instan posisi SELL\n` +
                     `  <i>Contoh:</i> <code>/sell EURUSD 0.10 -40</code>\n` +
-                    `• <code>/running</code> - Lihat daftar trade terbuka / pending\n` +
-                    `• <code>/close [id] [win/loss] [pnl]</code> - Tutup trade terbuka\n` +
-                    `• <code>/undo</code> - Batalkan/hapus trade terakhir jika salah input\n\n` +
-                    `<b>2. TOOLS & RISK MANAGEMENT:</b>\n` +
-                    `• <code>/news</code> - Kalender ekonomi Forex & rilis berita High-Impact\n` +
-                    `  <i>Opsi:</i> <code>/news today</code>, <code>/news usd</code>, <code>/news high</code>, <code>/news all</code>\n` +
-                    `• <code>/setrisk [persen]</code> - Atur toleransi risiko per trade (cth: <code>/setrisk 1.5</code>)\n` +
-                    `• <code>/setaccount [nano/cent/standard]</code> - Ganti tipe akun: Standard ($10), Cent (10¢), atau Nano (1¢/lot)\n` +
-                    `• <code>/lot [pips]</code> - Hitung lot optimal berdasarkan toleransi risiko akun\n\n` +
-                    `<b>3. KEUANGAN & PERFORMA:</b>\n` +
-                    `• <code>/saldo</code> - Cek modal awal, penarikan & current equity\n` +
-                    `• <code>/today</code> - Statistik trade hari ini (Win rate & P/L)\n` +
-                    `• <code>/weekly</code> - Statistik performa 7 hari terakhir\n` +
-                    `• <code>/deposit [jumlah]</code> - Catat deposit saldo\n` +
-                    `• <code>/wd [jumlah]</code> - Catat penarikan keuntungan\n` +
-                    `• <code>/setmodal [jumlah]</code> - Setel modal awal akun (cth: <code>/setmodal 10000</code>)\n\n` +
-                    `<b>4. MANAJEMEN AKUN:</b>\n` +
-                    `• <code>/menu</code> - Buka Control Panel navigasi utama\n` +
-                    `• <code>/accounts</code> - Daftar akun multi-user\n` +
-                    `• <code>/switch [username]</code> - Ganti akun aktif\n` +
-                    `• <code>/link [username]</code> - Tautkan akun Telegram\n\n` +
-                    `<b>5. SCREENSHOT & GAMBAR ENTRY:</b>\n` +
-                    `• <b>Kirim Foto + Caption:</b> Kirim chart dengan caption: <code>XAUUSD BUY 0.10 +150 WIN Setup Retest</code>\n` +
-                    `• <b>Kirim Foto Langsung:</b> Kirim foto tanpa caption, lalu klik tombol <i>[Catat Jurnal dengan Foto Ini]</i>\n` +
-                    `• <b>Wizard /jurnal:</b> Di langkah akhir wizard, kirim foto chart Anda\n` +
-                    `• <b>TradingView Link:</b> Sertakan link snapshot di /quick (cth: <code>https://tradingview.com/x/...</code>)`;
+                    `• <code>/running</code> — Lihat daftar trade aktif / pending order\n` +
+                    `• <code>/close [id] [win/loss] [pnl]</code> — Tutup trade terbuka\n` +
+                    `• <code>/undo</code> — Batalkan / hapus trade terakhir jika salah input\n\n` +
+                    `💰 <b>2. MODAL, KEUANGAN & PERFORMA</b>\n` +
+                    `• <code>/setmodal [jumlah]</code> — Setel modal awal akun (cth: <code>/setmodal 10000</code>)\n` +
+                    `• <code>/saldo</code> — Cek saldo modal awal, equity & status drawdown\n` +
+                    `• <code>/deposit [jumlah]</code> — Catat penambahan deposit saldo\n` +
+                    `• <code>/wd [jumlah]</code> — Catat penarikan keuntungan (withdrawal)\n` +
+                    `• <code>/today</code> — Rekap statistik & win rate hari ini\n` +
+                    `• <code>/weekly</code> — Rekap statistik performa 7 hari terakhir\n\n` +
+                    `🧮 <b>3. KALKULATOR & RISK MANAGEMENT</b>\n` +
+                    `• <code>/lot [pips]</code> — Hitung lot rekomendasi otomatis sesuai toleransi risiko\n` +
+                    `• <code>/setrisk [persen]</code> — Atur toleransi risiko per trade (cth: <code>/setrisk 1.5</code>)\n` +
+                    `• <code>/setaccount [nano/cent/standard]</code> — Ganti tipe akun:\n` +
+                    `   ├ <b>Standard</b> ($10 per pip untuk 1.00 lot)\n` +
+                    `   ├ <b>Cent</b> (10¢ per pip untuk 1.00 lot)\n` +
+                    `   └ <b>Nano</b> (1¢ per pip untuk 1.00 lot)\n\n` +
+                    `📰 <b>4. INFORMASI & ANALISA PASAR</b>\n` +
+                    `• <code>/news</code> — Kalender ekonomi Forex & rilis berita High-Impact\n` +
+                    `  <i>Opsi filter:</i> <code>/news today</code>, <code>/news usd</code>, <code>/news high</code>\n\n` +
+                    `👥 <b>5. MULTI-AKUN & NAVIGASI</b>\n` +
+                    `• <code>/menu</code> — Buka Control Panel navigasi interaktif utama\n` +
+                    `• <code>/accounts</code> — Daftar akun trading yang terhubung\n` +
+                    `• <code>/switch [username]</code> — Ganti akun aktif yang digunakan\n` +
+                    `• <code>/link [username]</code> — Hubungkan akun Telegram ke web\n` +
+                    `• <code>/login [user] [pass]</code> — Login akun resmi via Telegram\n\n` +
+                    `⚠️ <b>6. RESET & PEMBERSIHAN DATA</b>\n` +
+                    `• <code>/reset</code> — Hapus bersih seluruh riwayat log trade, depo/wd, dan kembalikan akun ke modal awal (dilengkapi tombol konfirmasi keamanan)\n\n` +
+                    `📸 <b>7. SCREENSHOT & CHART ENTRY</b>\n` +
+                    `• Kirim foto chart + caption: <code>XAUUSD BUY 0.10 +150 WIN Setup Retest</code>\n` +
+                    `• Atau kirim foto chart saja, lalu tekan tombol <i>[Catat Jurnal dengan Foto Ini]</i>\n` +
+                    `• TradingView: Tempel link chart snapshot di command /quick`;
 
     await sendOrEdit(ctx, helpMsg, true);
   };

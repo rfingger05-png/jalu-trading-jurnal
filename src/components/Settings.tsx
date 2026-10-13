@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { User } from '../types';
-import { TestTubeDiagonal, MonitorPlay, Check, AlertCircle } from 'lucide-react';
+import { TestTubeDiagonal, MonitorPlay, Check, AlertCircle, Trash2, RefreshCw } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { authFetch } from '../utils';
 
@@ -31,6 +31,32 @@ export default function Settings({ user, onUserUpdate, onLocalUpdate, onModeChan
 
   const [linkCopied, setLinkCopied] = useState(false);
   const [botStatus, setBotStatus] = useState<{ configured: boolean; authenticated: boolean; username: string | null; error: string | null } | null>(null);
+
+  // Reset data state
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [resetSuccess, setResetSuccess] = useState(false);
+
+  const handleResetData = async () => {
+    setResetting(true);
+    setError(null);
+    try {
+      const res = await authFetch('/api/account/reset', { method: 'POST' });
+      if (res.ok) {
+        setResetSuccess(true);
+        setConfirmReset(false);
+        onUserUpdate();
+        setTimeout(() => setResetSuccess(false), 5000);
+      } else {
+        const err = await res.json();
+        setError(err.error || 'Gagal mereset data akun.');
+      }
+    } catch (e: any) {
+      setError(e?.message || 'Terjadi kesalahan sistem.');
+    } finally {
+      setResetting(false);
+    }
+  };
 
   useEffect(() => {
     authFetch('/api/telegram/status')
@@ -452,15 +478,58 @@ export default function Settings({ user, onUserUpdate, onLocalUpdate, onModeChan
 
            <div className="flex flex-col gap-4 border-t border-slate-100 dark:border-neutral-800 pt-8 mt-4">
               <h3 className="text-xs font-bold uppercase tracking-widest text-red-500">Danger Zone</h3>
-              
-              <div className="p-6 border border-red-200 bg-red-50 rounded-sm flex items-center justify-between">
+
+              {/* Reset Data Akun */}
+              <div className="p-6 border border-rose-200 dark:border-rose-900/60 bg-rose-50/70 dark:bg-rose-950/20 rounded-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div className="flex flex-col">
-                  <span className="font-bold uppercase tracking-widest text-sm text-red-900">Logout Session</span>
-                  <span className="text-xs text-red-700">Clear your active session and return to the login screen.</span>
+                  <span className="font-bold uppercase tracking-widest text-sm text-rose-900 dark:text-rose-300 flex items-center gap-2">
+                    <Trash2 size={16} className="text-rose-600" />
+                    Reset Data Akun
+                  </span>
+                  <span className="text-xs text-rose-700 dark:text-rose-400 mt-0.5">
+                    Hapus seluruh riwayat trade log, deposit, dan withdrawal secara permanen untuk memulai lembaran bersih.
+                  </span>
+                  {resetSuccess && (
+                    <span className="text-xs text-emerald-600 dark:text-emerald-400 font-bold mt-2 flex items-center gap-1">
+                      <Check size={14} /> Seluruh data akun berhasil direset bersih!
+                    </span>
+                  )}
+                </div>
+
+                {confirmReset ? (
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={handleResetData}
+                      disabled={resetting}
+                      className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs uppercase tracking-widest rounded-sm shadow-sm transition-colors disabled:opacity-50"
+                    >
+                      {resetting ? 'Mereset...' : 'Ya, Hapus Semua'}
+                    </button>
+                    <button
+                      onClick={() => setConfirmReset(false)}
+                      className="px-3 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 dark:bg-neutral-800 dark:text-neutral-300 font-bold text-xs uppercase tracking-widest rounded-sm transition-colors"
+                    >
+                      Batal
+                    </button>
+                  </div>
+                ) : (
+                  <button 
+                    onClick={() => setConfirmReset(true)}
+                    className="px-5 py-2 border border-rose-600 text-rose-600 hover:bg-rose-600 hover:text-white font-bold text-xs uppercase tracking-widest transition-all rounded-sm shadow-xs shrink-0 cursor-pointer"
+                  >
+                    Reset Data
+                  </button>
+                )}
+              </div>
+              
+              <div className="p-6 border border-slate-200 dark:border-neutral-800 bg-slate-50 dark:bg-neutral-900/40 rounded-sm flex items-center justify-between">
+                <div className="flex flex-col">
+                  <span className="font-bold uppercase tracking-widest text-sm text-slate-800 dark:text-neutral-200">Logout Session</span>
+                  <span className="text-xs text-slate-500 dark:text-neutral-400">Clear your active session and return to the login screen.</span>
                 </div>
                 <button 
                   onClick={onLogout}
-                  className="px-6 py-2 bg-red-600 hover:bg-red-700 text-white dark:text-neutral-900 font-bold text-xs uppercase tracking-widest transition-colors rounded-sm shadow-sm"
+                  className="px-6 py-2 bg-black dark:bg-neutral-200 hover:bg-slate-800 dark:hover:bg-white text-white dark:text-neutral-900 font-bold text-xs uppercase tracking-widest transition-colors rounded-sm shadow-sm"
                 >
                   Logout
                 </button>

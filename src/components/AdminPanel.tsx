@@ -1,17 +1,24 @@
 import React, { useState, useEffect } from 'react';
 import { InviteCode, User } from '../types';
-import { Shield, KeyRound, User as UserIcon, Bot, CheckCircle2, AlertTriangle, RefreshCw, Send, Globe, Radio } from 'lucide-react';
+import { Shield, KeyRound, User as UserIcon, Bot, CheckCircle2, AlertTriangle, RefreshCw, Send, Globe, Radio, Trash2, Copy, Check, Plus, Ticket } from 'lucide-react';
 import { authFetch, safeFormatDate } from '../utils';
 
 export default function AdminPanel() {
   const [invites, setInvites] = useState<InviteCode[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(false);
+  const [customCodeInput, setCustomCodeInput] = useState('');
+  const [copiedCode, setCopiedCode] = useState<string | null>(null);
+  const [deletingCode, setDeletingCode] = useState<string | null>(null);
   
   // Password change state
   const [passwordChangeId, setPasswordChangeId] = useState<number | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [savingPassword, setSavingPassword] = useState(false);
+
+  // User deletion state
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const [deletingUserId, setDeletingUserId] = useState<number | null>(null);
 
   // Telegram bot state
   const [botData, setBotData] = useState<any>(null);
@@ -99,12 +106,61 @@ export default function AdminPanel() {
     }
   };
 
-  const generateInvite = async () => {
+  const generateInvite = async (customCode?: string) => {
     setLoading(true);
+    setFeedbackMsg(null);
     try {
-      const resp = await authFetch('/api/admin/invites', { method: 'POST' });
-      if (resp.ok) await fetchInvites();
-    } catch (e) { console.error(e); } finally { setLoading(false); }
+      const resp = await authFetch('/api/admin/invites', { 
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customCode: customCode || undefined })
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        setFeedbackMsg({ 
+          text: `✅ Kode khusus "${data.code}" berhasil diterbitkan! Calon pengguna sekarang dapat mendaftar dengan kode ini.`, 
+          type: 'success' 
+        });
+        setCustomCodeInput('');
+        await fetchInvites();
+      } else {
+        const err = await resp.json();
+        setFeedbackMsg({ text: err.error || 'Gagal menerbitkan kode khusus.', type: 'error' });
+      }
+    } catch (e: any) { 
+      console.error(e); 
+      setFeedbackMsg({ text: e?.message || 'Terjadi kesalahan sistem.', type: 'error' });
+    } finally { 
+      setLoading(false); 
+    }
+  };
+
+  const handleDeleteInvite = async (code: string) => {
+    setDeletingCode(code);
+    setFeedbackMsg(null);
+    try {
+      const resp = await authFetch(`/api/admin/invites/${encodeURIComponent(code)}`, {
+        method: 'DELETE'
+      });
+      if (resp.ok) {
+        setFeedbackMsg({ text: `Kode khusus "${code}" berhasil dihapus.`, type: 'success' });
+        await fetchInvites();
+      } else {
+        const err = await resp.json();
+        setFeedbackMsg({ text: err.error || 'Gagal menghapus kode khusus.', type: 'error' });
+      }
+    } catch (e: any) {
+      console.error(e);
+      setFeedbackMsg({ text: e?.message || 'Gagal menghapus kode.', type: 'error' });
+    } finally {
+      setDeletingCode(null);
+    }
+  };
+
+  const copyCode = (code: string) => {
+    navigator.clipboard?.writeText(code);
+    setCopiedCode(code);
+    setTimeout(() => setCopiedCode(null), 2500);
   };
   
   const handleChangePassword = async (userId: number) => {
@@ -133,6 +189,30 @@ export default function AdminPanel() {
       setFeedbackMsg({ text: e?.message || 'Terjadi kesalahan sistem.', type: 'error' });
     } finally {
       setSavingPassword(false);
+    }
+  };
+
+  const handleDeleteUser = async (targetUser: User) => {
+    setDeletingUserId(targetUser.id);
+    setFeedbackMsg(null);
+    try {
+      const res = await authFetch(`/api/admin/users/${targetUser.id}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        setFeedbackMsg({ text: `✅ Akun "${targetUser.username}" berhasil dihapus secara permanen.`, type: 'success' });
+        setConfirmDeleteId(null);
+        await fetchUsers();
+        await fetchInvites();
+      } else {
+        const err = await res.json();
+        setFeedbackMsg({ text: err.error || 'Gagal menghapus user.', type: 'error' });
+      }
+    } catch (e: any) {
+      console.error(e);
+      setFeedbackMsg({ text: e?.message || 'Terjadi kesalahan sistem.', type: 'error' });
+    } finally {
+      setDeletingUserId(null);
     }
   };
 
@@ -221,94 +301,224 @@ export default function AdminPanel() {
           </div>
         </div>
 
-        {/* Invites Section */}
-        <div>
-          <div className="flex justify-between items-center mb-4">
-            <h4 className="text-xs font-bold uppercase tracking-widest text-slate-600 dark:text-neutral-400">Active Invite Codes</h4>
-            <button 
-              onClick={generateInvite}
-              disabled={loading}
-              className="text-[9px] font-bold bg-black dark:bg-neutral-200 text-white dark:text-neutral-900 px-3 py-1 hover:bg-slate-800 transition-all uppercase disabled:opacity-50"
-            >
-              {loading ? '...' : 'Generate Invite'}
-            </button>
+        {/* Invites Section - KODE KHUSUS PENDAFTARAN DARI ADMIN */}
+        <div className="border border-slate-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-5 shadow-sm rounded-sm">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-neutral-800">
+            <div>
+              <div className="flex items-center gap-2">
+                <Ticket className="text-amber-500" size={18} />
+                <h4 className="text-xs font-bold uppercase tracking-widest text-slate-800 dark:text-neutral-200">
+                  Kode Khusus Pendaftaran (Anti-Spam Akun)
+                </h4>
+              </div>
+              <p className="text-[11px] text-slate-500 dark:text-neutral-400 mt-1">
+                Calon member wajib memiliki kode dari Admin untuk mendaftar. 1 kode hanya berlaku untuk 1 akun agar user tidak dapat spam generate akun berulang kali.
+              </p>
+            </div>
+
+            {/* Form Buat Kode */}
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="text"
+                placeholder="Kode kustom (opsional)"
+                value={customCodeInput}
+                onChange={e => setCustomCodeInput(e.target.value.toUpperCase())}
+                className="border border-slate-300 dark:border-neutral-700 text-xs px-2.5 py-1.5 focus:outline-none focus:border-amber-500 rounded-sm bg-slate-50 dark:bg-neutral-950 uppercase font-mono tracking-wider w-44"
+              />
+              <button 
+                onClick={() => generateInvite(customCodeInput)}
+                disabled={loading}
+                className="flex items-center gap-1.5 text-[10px] font-bold bg-amber-600 hover:bg-amber-500 text-white px-3 py-1.5 rounded-sm transition-all uppercase disabled:opacity-50 cursor-pointer shadow-sm"
+              >
+                <Plus size={12} />
+                {loading ? 'Membuat...' : customCodeInput ? 'Buat Kode Kustom' : 'Generate Kode Otomatis'}
+              </button>
+            </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+          {/* List of Invite Codes */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5 mt-5">
             {invites.map(invite => (
-              <div key={invite.code} className={`p-4 border shadow-sm flex flex-col gap-2 ${invite.is_used ? 'bg-slate-100 dark:bg-neutral-950 border-slate-200 dark:border-neutral-800 opacity-60' : 'bg-white dark:bg-neutral-900 border-slate-300 dark:border-neutral-700'}`}>
-                 <div className="flex justify-between items-center">
-                   <span className="font-mono text-lg font-bold tracking-widest">{invite.code}</span>
-                   <span className={`text-[8px] font-bold uppercase tracking-wider px-2 py-0.5 ${invite.is_used ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-600'}`}>
-                     {invite.is_used ? 'Used' : 'Available'}
-                   </span>
-                 </div>
-                 {invite.is_used && (
-                   <div className="text-[10px] text-slate-500 dark:text-neutral-500 uppercase tracking-widest font-bold mt-2 border-t border-slate-200 dark:border-neutral-800 pt-2">
-                     Used By: <span className="text-slate-800 dark:text-neutral-300">{invite.used_by}</span>
-                   </div>
-                 )}
+              <div 
+                key={invite.code} 
+                className={`p-3.5 border rounded-sm shadow-sm flex flex-col justify-between gap-3 transition-all ${
+                  invite.is_used 
+                    ? 'bg-slate-50/80 dark:bg-neutral-950/60 border-slate-200 dark:border-neutral-800 opacity-70' 
+                    : 'bg-white dark:bg-neutral-900 border-amber-500/30 dark:border-amber-500/20 shadow-amber-500/5'
+                }`}
+              >
+                <div className="flex justify-between items-start gap-2">
+                  <div>
+                    <span className="font-mono text-base font-bold tracking-widest text-slate-900 dark:text-white select-all">
+                      {invite.code}
+                    </span>
+                    <div className="text-[9px] text-slate-400 font-medium mt-0.5">
+                      Dibuat: {safeFormatDate(invite.created_at, 'dd MMM yyyy, HH:mm', 'Baru saja')}
+                    </div>
+                  </div>
+                  <span className={`text-[8px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                    invite.is_used 
+                      ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-900/50' 
+                      : 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-900/50'
+                  }`}>
+                    {invite.is_used ? 'Sudah Dipakai' : 'Tersedia'}
+                  </span>
+                </div>
+
+                {invite.is_used ? (
+                  <div className="text-[10px] text-slate-500 dark:text-neutral-400 font-semibold border-t border-slate-100 dark:border-neutral-800 pt-2 flex items-center justify-between">
+                    <span>Digunakan oleh: <b className="text-slate-800 dark:text-neutral-200 font-mono">{invite.used_by || (invite as any).used_by_username || '-'}</b></span>
+                    <button
+                      onClick={() => handleDeleteInvite(invite.code)}
+                      disabled={deletingCode === invite.code}
+                      className="text-slate-400 hover:text-rose-600 transition-colors p-1"
+                      title="Hapus riwayat kode"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="border-t border-slate-100 dark:border-neutral-800 pt-2 flex items-center justify-between gap-2">
+                    <button
+                      onClick={() => copyCode(invite.code)}
+                      className="flex-1 flex items-center justify-center gap-1.5 text-[10px] font-bold uppercase tracking-wider py-1 px-2 rounded bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-400 border border-amber-500/20 transition-all cursor-pointer"
+                    >
+                      {copiedCode === invite.code ? (
+                        <>
+                          <Check size={12} className="text-emerald-500" />
+                          <span className="text-emerald-600 dark:text-emerald-400">Tersalin!</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy size={12} />
+                          <span>Salin Kode</span>
+                        </>
+                      )}
+                    </button>
+                    <button
+                      onClick={() => handleDeleteInvite(invite.code)}
+                      disabled={deletingCode === invite.code}
+                      className="text-slate-400 hover:text-rose-600 transition-colors p-1.5 rounded hover:bg-rose-50 dark:hover:bg-rose-950/40"
+                      title="Hapus kode ini"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
             {invites.length === 0 && (
-              <div className="col-span-full border border-slate-200 dark:border-neutral-800 border-dashed text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center py-8">
-                No invite codes generated yet.
+              <div className="col-span-full border border-slate-200 dark:border-neutral-800 border-dashed text-xs text-slate-400 text-center py-8 rounded-sm">
+                Belum ada kode khusus. Klik <b>"Generate Kode Otomatis"</b> atau masukkan kode kustom di atas untuk dibagikan ke calon user.
               </div>
             )}
           </div>
         </div>
 
-        {/* Users Section */}
-        <div>
-          <h4 className="text-xs font-bold uppercase tracking-widest text-slate-600 dark:text-neutral-400 mb-4">User Management</h4>
+        {/* Users Section - MANAJEMEN PENGGUNA & HAPUS AKUN BIASA */}
+        <div className="border border-slate-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-5 shadow-sm rounded-sm">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-slate-100 dark:border-neutral-800 mb-4">
+            <div>
+              <h4 className="text-xs font-bold uppercase tracking-widest text-slate-800 dark:text-neutral-200">
+                Manajemen Akun Pengguna & Hapus Akun Biasa
+              </h4>
+              <p className="text-[11px] text-slate-500 dark:text-neutral-400 mt-0.5">
+                Admin dapat mereset password atau menghapus akun biasa yang melanggar/spam secara permanen.
+              </p>
+            </div>
+            <div className="text-[10px] font-bold text-slate-500 dark:text-neutral-400 uppercase tracking-widest">
+              Total Pengguna: {displayUsers.length}
+            </div>
+          </div>
+
           <div className="flex flex-col gap-3">
             {displayUsers.map(u => (
-               <div key={u.id} className="border border-slate-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-4 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+               <div key={u.id} className="border border-slate-200 dark:border-neutral-800 bg-slate-50/50 dark:bg-neutral-950/40 p-4 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 rounded-sm">
                   <div className="flex items-center gap-3">
-                     <div className={`w-8 h-8 rounded-sm flex items-center justify-center ${u.role === 'admin' ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 dark:bg-neutral-950 text-slate-500 dark:text-neutral-500'}`}>
-                        {u.role === 'admin' ? <Shield size={16} /> : <UserIcon size={16} />}
+                     <div className={`w-9 h-9 rounded-sm flex items-center justify-center ${u.role === 'admin' ? 'bg-blue-100 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-900' : 'bg-slate-200 dark:bg-neutral-800 text-slate-600 dark:text-neutral-300'}`}>
+                        {u.role === 'admin' ? <Shield size={18} /> : <UserIcon size={18} />}
                      </div>
                      <div className="flex flex-col">
-                        <span className="font-bold tracking-tight text-sm flex items-center gap-2">
+                        <span className="font-bold tracking-tight text-sm flex items-center gap-2 text-slate-900 dark:text-white">
                           {u.username}
-                          <span className={`text-[8px] uppercase tracking-widest px-1.5 py-0.5 rounded-sm ${u.current_mode === 'demo' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 dark:bg-neutral-950 text-slate-600 dark:text-neutral-400'}`}>
+                          <span className={`text-[8px] uppercase tracking-widest px-1.5 py-0.5 rounded-sm font-semibold ${u.current_mode === 'demo' ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400' : 'bg-slate-200 dark:bg-neutral-800 text-slate-700 dark:text-neutral-300'}`}>
                             {u.current_mode || 'backtest'}
                           </span>
+                          {u.role === 'admin' && (
+                            <span className="text-[8px] uppercase font-bold tracking-wider text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 px-2 py-0.5 rounded-sm border border-blue-200 dark:border-blue-900">
+                              Admin
+                            </span>
+                          )}
                         </span>
-                        <span className="text-[10px] uppercase tracking-widest font-bold text-slate-400">ID: {u.id} • Joined {safeFormatDate(u.created_at, 'MMM dd, yyyy', 'Unknown')}</span>
+                        <span className="text-[10px] uppercase tracking-widest font-bold text-slate-400">ID: {u.id} • Bergabung: {safeFormatDate(u.created_at, 'dd MMM yyyy', 'Baru')}</span>
                      </div>
                   </div>
                   
-                  <div className="flex flex-col sm:items-end w-full sm:w-auto">
+                  <div className="flex flex-wrap items-center gap-2 sm:justify-end w-full sm:w-auto">
                     {passwordChangeId === u.id ? (
                       <div className="flex items-center gap-2 w-full sm:w-auto">
                         <input 
                           type="text"
-                          placeholder="New Password"
+                          placeholder="Password Baru"
                           value={newPassword}
                           onChange={e => setNewPassword(e.target.value)}
-                          className="border border-slate-300 dark:border-neutral-700 text-xs px-2 py-1.5 flex-1 w-full sm:w-32 focus:outline-none focus:border-black dark:border-neutral-500"
+                          className="border border-slate-300 dark:border-neutral-700 text-xs px-2 py-1.5 flex-1 w-full sm:w-36 focus:outline-none focus:border-black dark:border-neutral-500 rounded-sm bg-white dark:bg-neutral-950"
                         />
                         <button 
                           onClick={() => handleChangePassword(u.id)}
                           disabled={savingPassword}
-                          className="bg-black dark:bg-neutral-200 text-white dark:text-neutral-900 text-[10px] uppercase font-bold tracking-widest px-3 py-1.5 hover:bg-slate-800 disabled:opacity-50"
+                          className="bg-black dark:bg-neutral-200 text-white dark:text-neutral-900 text-[10px] uppercase font-bold tracking-widest px-3 py-1.5 hover:bg-slate-800 disabled:opacity-50 rounded-sm cursor-pointer"
                         >
-                          Save
+                          Simpan
                         </button>
                         <button 
                           onClick={() => { setPasswordChangeId(null); setNewPassword(''); }}
-                          className="text-slate-400 hover:text-slate-700 dark:text-neutral-400 text-[10px] uppercase font-bold tracking-widest px-2"
+                          className="text-slate-400 hover:text-slate-700 dark:text-neutral-400 text-[10px] uppercase font-bold tracking-widest px-2 cursor-pointer"
                         >
-                          Cancel
+                          Batal
                         </button>
                       </div>
                     ) : (
                       <button 
-                        onClick={() => { setPasswordChangeId(u.id); setNewPassword(''); }}
-                        className="text-[10px] font-bold flex items-center gap-1.5 text-slate-500 dark:text-neutral-500 hover:text-black dark:hover:text-neutral-100 uppercase tracking-widest px-3 py-1 border border-slate-200 dark:border-neutral-800 hover:border-black dark:border-neutral-500 transition-colors rounded-sm"
+                        onClick={() => { setPasswordChangeId(u.id); setConfirmDeleteId(null); setNewPassword(''); }}
+                        className="text-[10px] font-bold flex items-center gap-1.5 text-slate-600 dark:text-neutral-400 hover:text-black dark:hover:text-white uppercase tracking-widest px-3 py-1.5 border border-slate-200 dark:border-neutral-800 hover:border-slate-400 dark:hover:border-neutral-600 transition-colors rounded-sm cursor-pointer bg-white dark:bg-neutral-900"
                       >
                          <KeyRound size={12} />
                          Reset Password
+                      </button>
+                    )}
+
+                    {u.role === 'admin' ? (
+                      <span className="text-[9px] text-slate-400 italic px-2">
+                        Akun Terlindungi
+                      </span>
+                    ) : confirmDeleteId === u.id ? (
+                      <div className="flex items-center gap-2 p-1.5 bg-rose-50 dark:bg-rose-950/60 border border-rose-300 dark:border-rose-900 rounded-sm shadow-sm">
+                        <span className="text-[10px] text-rose-700 dark:text-rose-300 font-bold px-1">
+                          Hapus akun "{u.username}" beserta seluruh datanya?
+                        </span>
+                        <button
+                          onClick={() => handleDeleteUser(u)}
+                          disabled={deletingUserId === u.id}
+                          className="bg-rose-600 hover:bg-rose-700 text-white text-[9px] uppercase font-bold tracking-wider px-2.5 py-1 rounded-sm disabled:opacity-50 cursor-pointer shadow-sm"
+                        >
+                          {deletingUserId === u.id ? 'Menghapus...' : 'Ya, Hapus Permanen'}
+                        </button>
+                        <button
+                          onClick={() => setConfirmDeleteId(null)}
+                          className="text-slate-500 hover:text-slate-700 dark:text-neutral-400 text-[9px] uppercase font-bold tracking-wider px-1.5 py-1 cursor-pointer"
+                        >
+                          Batal
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => { setConfirmDeleteId(u.id); setPasswordChangeId(null); }}
+                        className="text-[10px] font-bold flex items-center gap-1.5 text-rose-600 dark:text-rose-400 hover:text-white hover:bg-rose-600 uppercase tracking-widest px-3 py-1.5 border border-rose-200 dark:border-rose-900/60 hover:border-rose-600 transition-all rounded-sm cursor-pointer shadow-sm bg-white dark:bg-neutral-900"
+                        title="Hapus akun biasa beserta seluruh datanya"
+                      >
+                        <Trash2 size={12} />
+                        Hapus Akun Biasa
                       </button>
                     )}
                   </div>
@@ -316,7 +526,7 @@ export default function AdminPanel() {
             ))}
             {displayUsers.length === 0 && (
               <div className="border border-slate-200 dark:border-neutral-800 border-dashed text-[10px] font-bold uppercase tracking-widest text-slate-400 text-center py-8">
-                No users found.
+                Tidak ada akun pengguna ditemukan.
               </div>
             )}
           </div>

@@ -340,23 +340,9 @@ const adminMiddleware = (req: any, res: any, next: any) => {
   next();
 };
 
-// Public endpoint to get an active invite code (or sample demo code)
-app.get("/api/auth/invite-hint", async (req, res) => {
-  try {
-    const active = await db.execute("SELECT code FROM invite_codes WHERE is_used = 0 LIMIT 1");
-    if (active.rows.length > 0) {
-      return res.json({ available_code: active.rows[0].code });
-    }
-    // Create one if none available
-    const newCode = "TRADER" + Math.floor(1000 + Math.random() * 9000);
-    await db.execute({
-      sql: "INSERT OR IGNORE INTO invite_codes (code, is_used) VALUES (?, 0)",
-      args: [newCode]
-    });
-    res.json({ available_code: newCode });
-  } catch (e) {
-    res.json({ available_code: "WUCXB1WV" });
-  }
+// Invite hint endpoint: restricted so public users cannot generate free codes
+app.get("/api/auth/invite-hint", (req, res) => {
+  res.status(403).json({ error: "Kode khusus pendaftaran hanya diterbitkan oleh Admin di Akun Admin." });
 });
 
 // Auth Routes
@@ -377,15 +363,31 @@ app.post("/api/auth/register", async (req, res) => {
     if (cleanPassword.length < 4) {
       return res.status(400).json({ error: "Password minimal 4 karakter." });
     }
-    
-    if (inviteCode && String(inviteCode).trim()) {
-      const cleanInvite = String(inviteCode).trim().toUpperCase();
-      try {
-        await db.execute({
-          sql: "UPDATE invite_codes SET is_used = 1, used_by = ? WHERE UPPER(code) = ?",
-          args: [cleanUsername, cleanInvite]
-        });
-      } catch (err) {}
+
+    // STRICT VALIDATION: Kode Khusus Wajib dari Admin
+    if (!inviteCode || !String(inviteCode).trim()) {
+      return res.status(400).json({ 
+        error: "Kode khusus dari Admin wajib diisi. Silakan hubungi Admin untuk mendapatkan kode akses pendaftaran agar terhindar dari spam." 
+      });
+    }
+
+    const cleanInvite = String(inviteCode).trim().toUpperCase();
+    const codeCheck = await db.execute({
+      sql: "SELECT code, is_used, used_by FROM invite_codes WHERE UPPER(code) = ?",
+      args: [cleanInvite]
+    });
+
+    if (codeCheck.rows.length === 0) {
+      return res.status(400).json({ 
+        error: "Kode khusus pendaftaran tidak valid. Silakan hubungi Admin untuk meminta kode akses pendaftaran yang sah." 
+      });
+    }
+
+    const codeRow = codeCheck.rows[0] as any;
+    if (codeRow.is_used) {
+      return res.status(400).json({ 
+        error: `Kode khusus "${cleanInvite}" sudah pernah digunakan. Setiap kode hanya berlaku untuk 1 akun. Silakan hubungi Admin.` 
+      });
     }
     
     const hash = bcrypt.hashSync(cleanPassword, 10);
@@ -409,14 +411,11 @@ app.post("/api/auth/register", async (req, res) => {
       userId = u.rows[0]?.id;
     }
     
-    if (inviteCode && String(inviteCode).trim()) {
-      try {
-        await db.execute({
-          sql: "UPDATE invite_codes SET is_used = 1, used_by = ? WHERE UPPER(code) = ?",
-          args: [cleanUsername, String(inviteCode).trim().toUpperCase()]
-        });
-      } catch (err) {}
-    }
+    // Mark invite code as used by this username
+    await db.execute({
+      sql: "UPDATE invite_codes SET is_used = 1, used_by = ? WHERE UPPER(code) = ?",
+      args: [cleanUsername, cleanInvite]
+    });
     
     const token = jwt.sign({ id: userId, username: cleanUsername, role: 'user' }, JWT_SECRET, { expiresIn: '30d' });
     const isHttps = req.headers?.['x-forwarded-proto'] === 'https' || Boolean((req as any).connection?.encrypted) || Boolean((req as any).socket?.encrypted);
@@ -671,15 +670,47 @@ app.get("/api/admin/invites", authMiddleware, adminMiddleware, async (req, res) 
 
 app.post("/api/admin/invites", authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const code = Math.random().toString(36).substring(2, 10).toUpperCase();
+    const { customCode } = req.body || {};
+    let code = (customCode && String(customCode).trim())
+      ? String(customCode).trim().toUpperCase()
+      : 'TRADER' + Math.floor(1000 + Math.random() * 9000);
+
+    // Clean code string (only alphanumeric)
+    code = code.replace(/[^A-Z0-9_-]/g, '');
+    if (code.length < 3) {
+      return res.status(400).json({ error: "Kode khusus minimal 3 karakter." });
+    }
+
+    const existing = await db.execute({
+      sql: "SELECT code FROM invite_codes WHERE UPPER(code) = UPPER(?)",
+      args: [code]
+    });
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ error: `Kode "${code}" sudah terdaftar.` });
+    }
+
     await db.execute({
-      sql: "INSERT INTO invite_codes (code) VALUES (?)",
+      sql: "INSERT INTO invite_codes (code, is_used) VALUES (?, 0)",
       args: [code]
     });
     res.json({ success: true, code });
-  } catch (e) {
+  } catch (e: any) {
     console.error(e);
-    res.status(500).json({ error: "Server error" });
+    res.status(500).json({ error: e?.message || "Server error" });
+  }
+});
+
+app.delete("/api/admin/invites/:code", authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const code = String(req.params.code).trim().toUpperCase();
+    await db.execute({
+      sql: "DELETE FROM invite_codes WHERE UPPER(code) = UPPER(?)",
+      args: [code]
+    });
+    res.json({ success: true, message: `Kode "${code}" berhasil dihapus.` });
+  } catch (e: any) {
+    console.error(e);
+    res.status(500).json({ error: e?.message || "Server error" });
   }
 });
 
@@ -708,6 +739,65 @@ app.post("/api/admin/users/:id/password", authMiddleware, adminMiddleware, async
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: "Server error" });
+  }
+});
+
+app.delete("/api/admin/users/:id", authMiddleware, adminMiddleware, async (req: any, res) => {
+  try {
+    const targetId = Number(req.params.id);
+    if (!targetId || isNaN(targetId)) {
+      return res.status(400).json({ error: "ID pengguna tidak valid." });
+    }
+
+    if (targetId === Number(req.user.id)) {
+      return res.status(400).json({ error: "Tidak dapat menghapus akun Anda sendiri." });
+    }
+
+    const check = await db.execute({
+      sql: "SELECT id, username, role FROM users WHERE id = ?",
+      args: [targetId]
+    });
+
+    if (check.rows.length === 0) {
+      return res.status(404).json({ error: "Pengguna tidak ditemukan." });
+    }
+
+    const targetUser = check.rows[0] as any;
+    if (targetUser.role === 'admin' || targetUser.username?.toLowerCase() === 'singga' || targetUser.username?.toLowerCase() === 'aurel') {
+      return res.status(403).json({ error: "Akun administrator tidak dapat dihapus. Hanya akun biasa yang dapat dihapus." });
+    }
+
+    // Cascade delete across all tables
+    await db.execute({ sql: "DELETE FROM trades WHERE user_id = ?", args: [targetId] }).catch(() => {});
+    await db.execute({ sql: "DELETE FROM transactions WHERE user_id = ?", args: [targetId] }).catch(() => {});
+    await db.execute({ sql: "DELETE FROM telegram_accounts WHERE user_id = ?", args: [targetId] }).catch(() => {});
+    await db.execute({ sql: "DELETE FROM telegram_sessions WHERE active_user_id = ?", args: [targetId] }).catch(() => {});
+    await db.execute({ sql: "DELETE FROM user_characters WHERE user_id = ?", args: [targetId] }).catch(() => {});
+    await db.execute({ sql: "DELETE FROM user_quests WHERE user_id = ?", args: [targetId] }).catch(() => {});
+    await db.execute({ sql: "UPDATE invite_codes SET is_used = 0, used_by = NULL WHERE used_by = ?", args: [targetUser.username] }).catch(() => {});
+
+    // Finally delete user record
+    await db.execute({ sql: "DELETE FROM users WHERE id = ?", args: [targetId] });
+
+    res.json({ success: true, message: `Akun pengguna "${targetUser.username}" berhasil dihapus secara permanen.` });
+  } catch (e: any) {
+    console.error("Delete user error:", e);
+    res.status(500).json({ error: "Gagal menghapus user dari database." });
+  }
+});
+
+// Endpoint to reset account data (trades, depo/wd transactions, quests)
+app.post("/api/account/reset", authMiddleware, async (req: any, res) => {
+  try {
+    const userId = Number(req.user.id);
+    await db.execute({ sql: "DELETE FROM trades WHERE user_id = ?", args: [userId] }).catch(() => {});
+    await db.execute({ sql: "DELETE FROM transactions WHERE user_id = ?", args: [userId] }).catch(() => {});
+    await db.execute({ sql: "DELETE FROM user_quests WHERE user_id = ?", args: [userId] }).catch(() => {});
+    await db.execute({ sql: "DELETE FROM user_characters WHERE user_id = ?", args: [userId] }).catch(() => {});
+    res.json({ success: true, message: "Seluruh riwayat trade, deposit, dan penarikan berhasil direset." });
+  } catch (e: any) {
+    console.error("Account reset error:", e);
+    res.status(500).json({ error: "Gagal mereset data akun." });
   }
 });
 
