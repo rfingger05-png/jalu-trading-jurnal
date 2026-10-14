@@ -8,6 +8,7 @@ import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import cookieParser from "cookie-parser";
 import { initTelegramBot, botStatus } from "./src/lib/telegram.js";
+import { getXauusdEconomicNews } from "./src/lib/newsService.js";
 
 const JWT_SECRET = process.env.JWT_SECRET || 'trading_journal_super_secret_key_123';
 
@@ -245,6 +246,14 @@ async function initDb() {
     
     try {
       await db.execute("ALTER TABLE trades ADD COLUMN pips REAL DEFAULT NULL");
+    } catch (e) {}
+
+    try {
+      await db.execute("ALTER TABLE trades ADD COLUMN session TEXT DEFAULT NULL");
+    } catch (e) {}
+
+    try {
+      await db.execute("ALTER TABLE trades ADD COLUMN trade_time TEXT DEFAULT NULL");
     } catch (e) {}
 
     await db.execute(`
@@ -874,7 +883,9 @@ app.post("/api/trades", authMiddleware, async (req: any, res) => {
       pips,
       direction,
       image,
-      run_mode
+      run_mode,
+      session,
+      trade_time
     } = req.body;
 
     const userRes = await db.execute({
@@ -885,8 +896,8 @@ app.post("/api/trades", authMiddleware, async (req: any, res) => {
 
     const resultDb = await db.execute({
       sql: `INSERT INTO trades (
-        user_id, pair, direction, setup_name, entry_price, sl, tp, account_balance, risk_percentage, position_size, nominal_risk, anxiety_level, checklist, notes, result, realized_pl, pips, image, run_mode
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        user_id, pair, direction, setup_name, entry_price, sl, tp, account_balance, risk_percentage, position_size, nominal_risk, anxiety_level, checklist, notes, result, realized_pl, pips, image, run_mode, session, trade_time
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
         req.user.id, 
         pair || null, 
@@ -906,7 +917,9 @@ app.post("/api/trades", authMiddleware, async (req: any, res) => {
         realized_pl !== undefined ? realized_pl : null, 
         pips !== undefined && pips !== null && pips !== '' ? Number(pips) : null,
         image || null, 
-        modeToUse
+        modeToUse,
+        session || null,
+        trade_time || null
       ]
     });
 
@@ -985,13 +998,17 @@ app.put("/api/trades/:id", authMiddleware, async (req: any, res) => {
     const { id } = req.params;
     const { result, realized_pl, pips, notes, image } = req.body;
     
+    const { session, trade_time } = req.body;
+    
     await db.execute({
       sql: `UPDATE trades SET 
         result = ?, 
         realized_pl = ?, 
         pips = CASE WHEN ? IS NOT NULL THEN ? ELSE pips END,
         notes = ?, 
-        image = ? 
+        image = ?,
+        session = CASE WHEN ? IS NOT NULL THEN ? ELSE session END,
+        trade_time = CASE WHEN ? IS NOT NULL THEN ? ELSE trade_time END
       WHERE id = ? AND user_id = ?`,
       args: [
         result, 
@@ -1000,6 +1017,10 @@ app.put("/api/trades/:id", authMiddleware, async (req: any, res) => {
         pips !== undefined ? Number(pips) : null,
         notes !== undefined ? notes : null,
         image !== undefined ? image : null,
+        session !== undefined ? session : null,
+        session !== undefined ? session : null,
+        trade_time !== undefined ? trade_time : null,
+        trade_time !== undefined ? trade_time : null,
         id, 
         req.user.id
       ]
@@ -1009,6 +1030,38 @@ app.put("/api/trades/:id", authMiddleware, async (req: any, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Failed to update trade" });
+  }
+});
+
+// Economic News Endpoint (XAUUSD focused, with passed/upcoming detection within 1 month)
+app.get("/api/news", async (req, res) => {
+  try {
+    const filter = (req.query.filter as string) || 'xauusd';
+    const status = (req.query.status as string) || 'all'; // all | passed | upcoming
+    const force = req.query.refresh === 'true';
+
+    let news = await getXauusdEconomicNews(force);
+    
+    if (status === 'passed') {
+      news = news.filter(n => n.is_passed);
+    } else if (status === 'upcoming') {
+      news = news.filter(n => !n.is_passed);
+    }
+
+    if (filter === 'high') {
+      news = news.filter(n => String(n.impact).toLowerCase() === 'high');
+    }
+
+    res.json({
+      success: true,
+      count: news.length,
+      filter,
+      status,
+      news
+    });
+  } catch (error: any) {
+    console.error("Fetch news error:", error);
+    res.status(500).json({ error: "Failed to fetch economic news" });
   }
 });
 

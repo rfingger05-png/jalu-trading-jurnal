@@ -1,10 +1,11 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Trade, User, Transaction } from '../types';
 import { cn } from '../lib/utils';
 import { format, subDays, startOfDay, isSameDay } from 'date-fns';
-import { formatCurrency, safeParseDate, safeFormatDate } from '../utils';
+import { formatCurrency, safeParseDate, safeFormatDate, detectTradingSession } from '../utils';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
-import { TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, Activity, Calendar, Clock, DollarSign, Wallet } from 'lucide-react';
+import { TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, Activity, Calendar, Clock, DollarSign, Wallet, Newspaper } from 'lucide-react';
+import EconomicCalendarModal from './EconomicCalendarModal';
 
 interface DashboardProps {
   trades: Trade[];
@@ -23,6 +24,7 @@ export default function Dashboard({
   onOpenBanking,
   onOpenHistory
 }: DashboardProps) {
+  const [showNewsModal, setShowNewsModal] = useState(false);
 
   const completedTrades = useMemo(() => {
     return trades
@@ -137,22 +139,41 @@ export default function Dashboard({
 
       let wr = -1;
       let dayPL = 0;
+      let dayWins = 0;
+      let dayLosses = 0;
       if (dayTrades.length > 0) {
-        const dWins = dayTrades.filter(t => t.result.toLowerCase() === 'win').length;
-        wr = dWins / dayTrades.length;
+        dayWins = dayTrades.filter(t => t.result.toLowerCase() === 'win').length;
+        dayLosses = dayTrades.filter(t => t.result.toLowerCase() === 'loss').length;
+        wr = dayWins / dayTrades.length;
         dayPL = dayTrades.reduce((acc, t) => acc + (t.realized_pl || 0), 0);
       }
-      result.push({ date: d, wr, count: dayTrades.length, dayPL });
+      result.push({ date: d, wr, count: dayTrades.length, dayPL, wins: dayWins, losses: dayLosses });
     }
     return result;
   }, [completedTrades, today]);
 
   const getHeatMapColor = (wr: number, count: number) => {
-    if (count === 0) return 'bg-slate-100 dark:bg-slate-900/60 border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-600';
-    if (wr === 0) return 'bg-red-50 dark:bg-red-950/70 border-red-200 dark:border-red-800 text-red-600 dark:text-red-400';
-    if (wr < 0.5) return 'bg-amber-50 dark:bg-amber-950/70 border-amber-200 dark:border-amber-800 text-amber-600 dark:text-amber-400';
-    if (wr === 0.5) return 'bg-blue-50 dark:bg-blue-950/70 border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400';
-    return 'bg-emerald-50 dark:bg-emerald-950/70 border-emerald-200 dark:border-emerald-800 text-emerald-600 dark:text-emerald-400';
+    if (count === 0) {
+      return 'bg-slate-100/80 dark:bg-slate-900/40 border-slate-200 dark:border-slate-800/80 text-slate-400 dark:text-slate-600 hover:border-slate-400';
+    }
+    // WR Sangat Rendah (< 35%, merah tegas)
+    if (wr < 0.35) {
+      return 'bg-rose-500/25 dark:bg-rose-950/70 border-rose-400 dark:border-rose-800 text-rose-700 dark:text-rose-300 font-extrabold ring-1 ring-rose-500/30';
+    }
+    // WR Rendah (35% - 49%, oranye / coral)
+    if (wr < 0.50) {
+      return 'bg-orange-500/20 dark:bg-orange-950/60 border-orange-400 dark:border-orange-800/80 text-orange-700 dark:text-orange-300 font-bold';
+    }
+    // WR Sedang (50% - 64%, kuning amber)
+    if (wr < 0.65) {
+      return 'bg-amber-500/20 dark:bg-amber-950/60 border-amber-400 dark:border-amber-700/80 text-amber-700 dark:text-amber-300 font-bold';
+    }
+    // WR Bagus (65% - 79%, hijau segar)
+    if (wr < 0.80) {
+      return 'bg-emerald-500/20 dark:bg-emerald-950/60 border-emerald-400 dark:border-emerald-700/80 text-emerald-700 dark:text-emerald-300 font-bold';
+    }
+    // WR Sangat Tinggi (>= 80%, hijau zamrud tebal / elite)
+    return 'bg-emerald-500/35 dark:bg-emerald-900/80 border-emerald-500 dark:border-emerald-400 text-emerald-800 dark:text-emerald-100 font-black ring-2 ring-emerald-500/50 shadow-xs';
   };
 
   // Day of Week Stats
@@ -180,24 +201,33 @@ export default function Dashboard({
     });
   }, [completedTrades]);
 
-  // Session Stats
+  // Session Stats (Asia, London, Overlap London-NY, New York)
   const sessionStats = useMemo(() => {
     const acc: Record<string, { trades: number, wins: number, pnl: number }> = {
-      'Asian (00:00 - 08:00)': { trades: 0, wins: 0, pnl: 0 },
-      'London (08:00 - 13:00)': { trades: 0, wins: 0, pnl: 0 },
-      'New York (13:00 - 22:00)': { trades: 0, wins: 0, pnl: 0 }
+      'Asian (06:00 - 14:00)': { trades: 0, wins: 0, pnl: 0 },
+      'London (14:00 - 19:00)': { trades: 0, wins: 0, pnl: 0 },
+      'Overlap London-NY (19:00 - 23:00)': { trades: 0, wins: 0, pnl: 0 },
+      'New York (23:00 - 06:00)': { trades: 0, wins: 0, pnl: 0 }
     };
     
     completedTrades.forEach(t => {
-      const date = safeParseDate(t.created_at);
-      const hour = date.getHours();
-      let session = 'Asian (00:00 - 08:00)';
-      if (hour >= 8 && hour < 13) session = 'London (08:00 - 13:00)';
-      else if (hour >= 13 && hour <= 22) session = 'New York (13:00 - 22:00)';
+      let sessionKey = 'Asian (06:00 - 14:00)';
+      if (t.session) {
+        if (t.session === 'London') sessionKey = 'London (14:00 - 19:00)';
+        else if (t.session === 'Overlap') sessionKey = 'Overlap London-NY (19:00 - 23:00)';
+        else if (t.session === 'New York') sessionKey = 'New York (23:00 - 06:00)';
+        else if (t.session === 'Asian') sessionKey = 'Asian (06:00 - 14:00)';
+      } else {
+        const sessInfo = detectTradingSession(t.trade_time || t.created_at);
+        if (sessInfo.name === 'London') sessionKey = 'London (14:00 - 19:00)';
+        else if (sessInfo.name === 'Overlap') sessionKey = 'Overlap London-NY (19:00 - 23:00)';
+        else if (sessInfo.name === 'New York') sessionKey = 'New York (23:00 - 06:00)';
+        else sessionKey = 'Asian (06:00 - 14:00)';
+      }
       
-      acc[session].trades += 1;
-      if (t.result.toLowerCase() === 'win') acc[session].wins += 1;
-      acc[session].pnl += (t.realized_pl || 0);
+      acc[sessionKey].trades += 1;
+      if (t.result.toLowerCase() === 'win') acc[sessionKey].wins += 1;
+      acc[sessionKey].pnl += (t.realized_pl || 0);
     });
     
     return Object.entries(acc).map(([session, data]) => ({
@@ -233,6 +263,16 @@ export default function Dashboard({
           </div>
 
           <div className="flex items-center gap-2.5">
+            <button
+              onClick={() => setShowNewsModal(true)}
+              className="px-3.5 py-1.5 text-xs font-semibold rounded border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-400 transition-colors shadow-xs flex items-center gap-1.5 cursor-pointer"
+              title="Lihat Berita Berdampak ke Emas (XAUUSD)"
+            >
+              <Newspaper size={13} className="text-amber-500" />
+              <span>News XAUUSD</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+            </button>
+
             {onOpenBanking && (
               <button
                 onClick={onOpenBanking}
@@ -374,31 +414,79 @@ export default function Dashboard({
           </div>
         </div>
 
-        {/* 30-Day Activity Heatmap */}
+        {/* 30-Day Activity Heatmap - GRADASI WARNA BERDASARKAN WIN RATE (WR) */}
         <div className="p-5 sm:p-6 rounded border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0d1322] shadow-xs">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4 pb-3 border-b border-slate-100 dark:border-slate-800">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-100 dark:border-slate-800">
             <div>
-              <h2 className="text-sm font-bold tracking-tight text-slate-900 dark:text-white">Trading Consistency (Last 30 Days)</h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400">Daily frequency and session win rate</p>
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-bold tracking-tight text-slate-900 dark:text-white">Kotak Konsistensi Trading & Win Rate (30 Hari Terakhir)</h2>
+                <span className="text-[10px] px-2 py-0.5 rounded-full font-bold bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/20">
+                  Gradasi WR
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Warna kotak otomatis menyesuaikan persentase Win Rate harian (Tinggi = Hijau Emerald, Rendah = Merah Pekat)</p>
             </div>
-            <div className="flex items-center gap-3 text-[11px] font-medium text-slate-500 dark:text-slate-400">
-              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-xs bg-slate-200 dark:bg-slate-800 border border-slate-300 dark:border-slate-700"></span> No trade</span>
-              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-xs bg-red-100 dark:bg-red-950/80 border border-red-300 dark:border-red-700"></span> Loss</span>
-              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-xs bg-emerald-100 dark:bg-emerald-950/80 border border-emerald-300 dark:border-emerald-700"></span> Win</span>
+            <div className="flex flex-wrap items-center gap-2 text-[10px] font-semibold text-slate-600 dark:text-slate-400">
+              <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700">
+                <span className="w-2.5 h-2.5 rounded-xs bg-slate-200 dark:bg-slate-800 border border-slate-300 dark:border-slate-700"></span> 
+                No Trade
+              </span>
+              <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-rose-600 dark:text-rose-400">
+                <span className="w-2.5 h-2.5 rounded-xs bg-rose-500/30 border border-rose-500"></span> 
+                WR &lt;35% (Sangat Rendah)
+              </span>
+              <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-orange-50 dark:bg-orange-950/40 border border-orange-200 dark:border-orange-900 text-orange-600 dark:text-orange-400">
+                <span className="w-2.5 h-2.5 rounded-xs bg-orange-500/30 border border-orange-500"></span> 
+                WR 35-49% (Rendah)
+              </span>
+              <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900 text-amber-600 dark:text-amber-400">
+                <span className="w-2.5 h-2.5 rounded-xs bg-amber-500/30 border border-amber-500"></span> 
+                WR 50-64% (Sedang)
+              </span>
+              <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900 text-emerald-600 dark:text-emerald-400">
+                <span className="w-2.5 h-2.5 rounded-xs bg-emerald-500/30 border border-emerald-500"></span> 
+                WR 65-79% (Bagus)
+              </span>
+              <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/80 border border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-200 font-bold">
+                <span className="w-2.5 h-2.5 rounded-xs bg-emerald-500 border border-emerald-400"></span> 
+                WR ≥80% (Tinggi / Elite)
+              </span>
             </div>
           </div>
 
-          <div className="grid grid-cols-7 sm:grid-cols-10 md:grid-cols-12 lg:grid-cols-[repeat(15,minmax(0,1fr))] gap-2">
-            {heatMapDays.map((d, i) => (
-              <div 
-                key={i} 
-                className={cn("h-11 rounded-xs border flex flex-col items-center justify-center text-xs font-mono font-semibold transition-all hover:scale-105 cursor-pointer tabular-nums", getHeatMapColor(d.wr, d.count))}
-                title={`${format(d.date, 'dd MMM yyyy')}: ${d.count} trades, Net: ${formatCurrency(d.dayPL, user?.currency)}`}
-              >
-                <span className="text-[10px] opacity-75">{format(d.date, 'd')}</span>
-                {d.count > 0 && <span className="text-[9px] font-bold">{d.count}t</span>}
-              </div>
-            ))}
+          <div className="grid grid-cols-6 sm:grid-cols-10 md:grid-cols-12 lg:grid-cols-[repeat(15,minmax(0,1fr))] gap-2">
+            {heatMapDays.map((d, i) => {
+              const wrPercent = d.wr >= 0 ? Math.round(d.wr * 100) : -1;
+              const signPL = d.dayPL >= 0 ? '+' : '';
+              const tooltipTitle = d.count > 0 
+                ? `📅 ${format(d.date, 'dd MMM yyyy')}\n🎯 Win Rate: ${wrPercent}% (${d.wins} Win, ${d.losses} Loss)\n📦 Total Trades: ${d.count}\n💰 Net P/L: ${signPL}${formatCurrency(d.dayPL, user?.currency)}`
+                : `📅 ${format(d.date, 'dd MMM yyyy')}: Tidak ada transaksi`;
+
+              return (
+                <div 
+                  key={i} 
+                  className={cn(
+                    "min-h-[52px] p-1 rounded-sm border flex flex-col items-center justify-between text-xs font-mono transition-all hover:scale-105 cursor-pointer tabular-nums shadow-2xs select-none", 
+                    getHeatMapColor(d.wr, d.count)
+                  )}
+                  title={tooltipTitle}
+                >
+                  <span className="text-[10px] font-sans opacity-70 leading-none">{format(d.date, 'd')}</span>
+                  {d.count > 0 ? (
+                    <div className="flex flex-col items-center my-0.5">
+                      <span className="text-[10px] font-black tracking-tight leading-tight">
+                        {wrPercent}%
+                      </span>
+                      <span className="text-[8px] opacity-75 font-sans font-medium leading-none">
+                        {d.wins}W {d.losses}L
+                      </span>
+                    </div>
+                  ) : (
+                    <span className="text-[8px] opacity-30 my-auto">-</span>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -545,6 +633,10 @@ export default function Dashboard({
         </div>
 
       </div>
+
+      {showNewsModal && (
+        <EconomicCalendarModal onClose={() => setShowNewsModal(false)} />
+      )}
     </div>
   );
 }

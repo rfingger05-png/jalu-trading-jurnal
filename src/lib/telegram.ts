@@ -1,6 +1,7 @@
 import { Telegraf, Markup } from 'telegraf';
 import { message } from 'telegraf/filters';
 import bcrypt from 'bcryptjs';
+import { getXauusdEconomicNews, EconomicNewsItem } from './newsService.js';
 
 export function escapeHtml(text: any): string {
   if (text === null || text === undefined) return '';
@@ -210,6 +211,55 @@ export let botStatus = {
   error: null as string | null
 };
 
+// Session & WIB Time Helper for Automatic Market Session Detection
+export function getWibTimeAndSession(customTime?: string) {
+  let hour: number;
+  let minStr: string;
+  let timeStr: string;
+
+  if (customTime && customTime.includes(':')) {
+    const parts = customTime.split(':');
+    hour = parseInt(parts[0], 10);
+    minStr = (parts[1] || '00').padStart(2, '0');
+    timeStr = `${String(hour).padStart(2, '0')}:${minStr}`;
+  } else {
+    // Current time in WIB (Asia/Jakarta, UTC+7)
+    const nowWib = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Jakarta" }));
+    hour = nowWib.getHours();
+    minStr = String(nowWib.getMinutes()).padStart(2, '0');
+    timeStr = `${String(hour).padStart(2, '0')}:${minStr}`;
+  }
+
+  // Indonesian / standard market session hours (WIB, UTC+7)
+  // Asian (Tokyo/Sydney): 06:00 - 14:00 WIB
+  // London (European): 14:00 - 19:00 WIB
+  // Overlap London - New York (Peak Volatility for XAUUSD): 19:00 - 23:00 WIB
+  // New York (US): 23:00 - 06:00 WIB
+  let sessionName = 'New York';
+  let sessionDisplay = '🗽 Sesi New York (US)';
+  let sessionBadge = '🗽 New York';
+  let timeRange = '23:00 - 06:00 WIB';
+
+  if (hour >= 6 && hour < 14) {
+    sessionName = 'Asian';
+    sessionDisplay = '🌏 Sesi Asia (Tokyo/Sydney)';
+    sessionBadge = '🌏 Asia';
+    timeRange = '06:00 - 14:00 WIB';
+  } else if (hour >= 14 && hour < 19) {
+    sessionName = 'London';
+    sessionDisplay = '🏛️ Sesi London (Eropa)';
+    sessionBadge = '🏛️ London';
+    timeRange = '14:00 - 19:00 WIB';
+  } else if (hour >= 19 && hour < 23) {
+    sessionName = 'Overlap';
+    sessionDisplay = '⚡ Overlap London-NY (High Volatility XAUUSD)';
+    sessionBadge = '⚡ Overlap (LDN-NY)';
+    timeRange = '19:00 - 23:00 WIB';
+  }
+
+  return { timeStr, sessionName, sessionDisplay, sessionBadge, timeRange };
+}
+
 // Interactive Journaling Session per Telegram ID
 interface JournalSession {
   step: 'pair' | 'direction' | 'lot' | 'entry' | 'sltp' | 'result' | 'pnl' | 'setup' | 'image';
@@ -223,6 +273,8 @@ interface JournalSession {
   pnl?: number;
   setup?: string;
   image?: string;
+  trade_time?: string;
+  session?: string;
   timestamp: number;
 }
 const journalSessions = new Map<string, JournalSession>();
@@ -966,20 +1018,23 @@ export function initTelegramBot(db: any) {
       const setup = s.setup || 'Telegram Journal';
       const mode = user.current_mode || 'backtest';
       const isWin = result.toUpperCase() === 'WIN';
-
       const pips = calculatePips(pair, entry, tp, pnl, lot, isWin, user?.currency === 'NANO');
+
+      const sess = getWibTimeAndSession(s.trade_time);
 
       const insertRes = await db.execute({
         sql: `INSERT INTO trades (
           user_id, pair, direction, setup_name, entry_price, sl, tp,
           account_balance, position_size, result, realized_pl, pips,
-          anxiety_level, notes, image, image_url, has_image, run_mode, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+          anxiety_level, notes, image, image_url, has_image, run_mode,
+          session, trade_time, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
         args: [
           user.id, pair, direction, setup, entry, sl, tp,
           0, lot, result, pnl, pips,
           2, `Logged via Telegram Interactive Wizard`,
-          s.image || null, s.image || null, s.image ? 1 : 0, mode
+          s.image || null, s.image || null, s.image ? 1 : 0, mode,
+          sess.sessionName, sess.timeStr
         ]
       });
 
@@ -997,6 +1052,7 @@ export function initTelegramBot(db: any) {
                    `📦 <b>Lot Size:</b> <b>${lot}</b>\n` +
                    (entry > 0 ? `🎯 <b>Entry:</b> ${entry}\n` : '') +
                    (sl > 0 ? `🛑 <b>SL:</b> ${sl} | 🎯 <b>TP:</b> ${tp}\n` : '') +
+                   `🕒 <b>Waktu:</b> <b>${sess.timeStr} WIB</b> (${sess.sessionDisplay})\n` +
                    `🏆 <b>Status:</b> <b>${result}</b>\n` +
                    `💵 <b>Realized P/L:</b> <b>${signPL}$${pnl.toFixed(2)}</b>\n` +
                    `📏 <b>Pips:</b> <b>${signPips}${pips} Pips</b>\n` +
@@ -1162,16 +1218,20 @@ export function initTelegramBot(db: any) {
       const isWin = result === 'WIN';
       const pips = calculatePips(pair, entry, tp, pnl, lot, isWin, user?.currency === 'NANO');
 
+      const sess = getWibTimeAndSession();
+
       const ins = await db.execute({
         sql: `INSERT INTO trades (
           user_id, pair, direction, setup_name, entry_price, sl, tp,
           account_balance, position_size, result, realized_pl, pips,
-          anxiety_level, notes, image, image_url, has_image, run_mode, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+          anxiety_level, notes, image, image_url, has_image, run_mode,
+          session, trade_time, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
         args: [
           user.id, pair, direction, setupName, entry, sl, tp,
           0, lot, result, pnl, pips,
-          2, setupName, parsedImage || null, parsedImage || null, parsedImage ? 1 : 0, mode
+          2, setupName, parsedImage || null, parsedImage || null, parsedImage ? 1 : 0, mode,
+          sess.sessionName, sess.timeStr
         ]
       });
 
@@ -1188,6 +1248,7 @@ export function initTelegramBot(db: any) {
                   `📦 <b>Lot:</b> ${lot}\n` +
                   (entry > 0 ? `🎯 <b>Entry:</b> ${entry}\n` : '') +
                   (sl > 0 ? `🛑 <b>SL:</b> ${sl} | 🎯 <b>TP:</b> ${tp}\n` : '') +
+                  `🕒 <b>Waktu:</b> <b>${sess.timeStr} WIB</b> (${sess.sessionDisplay})\n` +
                   `🏆 <b>Status:</b> <b>${result}</b>\n` +
                   `💵 <b>P/L Realized:</b> <b>${signPL}$${pnl.toFixed(2)}</b>\n` +
                   `📏 <b>Pips:</b> <b>${signPips}${pips} Pips</b>\n` +
@@ -1759,96 +1820,97 @@ export function initTelegramBot(db: any) {
     await handleSetRisk(ctx, val);
   });
 
-  // COMMAND: /news - Forex & Economic News Calendar
-  const handleNews = async (ctx: any, filterMode: 'high' | 'today' | 'usd' | 'all' = 'high') => {
+  // COMMAND: /news - Forex & Economic News Calendar (XAUUSD Gold Only with 1-Month Passed Checkmark √)
+  const handleNews = async (ctx: any, filterMode: 'xauusd' | 'passed' | 'upcoming' | 'high' = 'xauusd') => {
     try {
       const text = (ctx.message?.text || '').trim();
       const parts = text.split(/\s+/);
       let mode = filterMode;
       if (parts.length > 1) {
         const arg = parts[1].toLowerCase();
-        if (arg === 'today' || arg === 'hariini') mode = 'today';
-        else if (arg === 'usd' || arg === 'gold' || arg === 'xau') mode = 'usd';
-        else if (arg === 'all' || arg === 'semua') mode = 'all';
+        if (arg === 'passed' || arg === 'lewat' || arg === 'selesai' || arg === 'history') mode = 'passed';
+        else if (arg === 'upcoming' || arg === 'nanti' || arg === 'akandatang') mode = 'upcoming';
         else if (arg === 'high') mode = 'high';
+        else if (arg === 'xau' || arg === 'gold' || arg === 'xauusd') mode = 'xauusd';
       }
 
-      const allEvents = await fetchForexNews(filterMode === 'all');
-      if (!allEvents || allEvents.length === 0) {
+      const allXauEvents = await getXauusdEconomicNews(false);
+      if (!allXauEvents || allXauEvents.length === 0) {
         const fallbackMsg =
-          `📰 <b>KALENDER FOREX & JADWAL SESI TRADING</b>\n` +
+          `📰 <b>KALENDER NEWS XAUUSD (GOLD ONLY)</b>\n` +
           `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-          `⚠️ <i>Data kalender eksternal sedang dalam pembaruan. Jadwal Sesi Utama (WIB):</i>\n\n` +
-          `🌏 <b>Sesi Tokyo (Asia):</b> 07:00 - 16:00 WIB\n` +
-          `🇬🇧 <b>Sesi London (Eropa):</b> 14:00 - 23:00 WIB\n` +
-          `🇺🇸 <b>Sesi New York (US):</b> 19:00 - 04:00 WIB\n\n` +
-          `🔥 <i>Waktu Overlap Volatilitas Tertinggi: 19:00 - 23:00 WIB</i>`;
+          `⚠️ <i>Data kalender eksternal sedang dalam pembaruan. Jadwal Sesi Emas Utama (WIB):</i>\n\n` +
+          `⚡ <b>Overlap London - New York:</b> 19:00 - 23:00 WIB (Paling Volatil!)\n` +
+          `🏛️ <b>Sesi London (Eropa):</b> 14:00 - 19:00 WIB\n` +
+          `🗽 <b>Sesi New York (US):</b> 23:00 - 06:00 WIB\n` +
+          `🌏 <b>Sesi Asia (Tokyo):</b> 06:00 - 14:00 WIB\n\n` +
+          `<i>News penggerak utama XAUUSD: NFP, CPI, Core PPI, FOMC / Fed Rate, Core PCE, Retail Sales.</i>`;
         return sendOrEdit(ctx, fallbackMsg, true);
       }
 
-      const now = new Date();
-      const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(now);
-
-      let filtered = allEvents.filter(ev => {
-        const evDate = new Date(ev.date);
-        const evDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(evDate);
-
-        if (mode === 'today') {
-          return evDateStr === todayStr && (ev.impact === 'High' || ev.impact === 'Medium');
-        } else if (mode === 'usd') {
-          return ev.country.toUpperCase() === 'USD' && (ev.impact === 'High' || ev.impact === 'Medium');
-        } else if (mode === 'all') {
-          return true;
-        } else {
-          return ev.impact === 'High';
-        }
-      });
-
-      let fallbackNote = '';
-      if (filtered.length === 0) {
-        if (mode === 'today') {
-          fallbackNote = '<i>(Event High/Med hari ini sudah selesai atau libur. Menampilkan High-Impact terdekat:)</i>\n';
-          filtered = allEvents.filter(ev => ev.impact === 'High').slice(0, 7);
-        } else {
-          filtered = allEvents.slice(0, 8);
-        }
+      let filtered = allXauEvents;
+      if (mode === 'passed') {
+        filtered = allXauEvents.filter(ev => ev.is_passed);
+      } else if (mode === 'upcoming') {
+        filtered = allXauEvents.filter(ev => !ev.is_passed);
+      } else if (mode === 'high') {
+        filtered = allXauEvents.filter(ev => String(ev.impact).toLowerCase() === 'high');
+      } else {
+        // Default 'xauusd': show recent passed events (1-month history) and upcoming releases
+        const passedRecent = allXauEvents.filter(ev => ev.is_passed).slice(-3); // last 3 passed
+        const upcomingNear = allXauEvents.filter(ev => !ev.is_passed).slice(0, 6); // next 6 upcoming
+        filtered = [...passedRecent, ...upcomingNear];
       }
 
-      const displayEvents = filtered.slice(0, 8);
-      const modeTitle = mode === 'today' ? '📅 HARI INI' : mode === 'usd' ? '🇺🇸 USD & GOLD IMPACT' : mode === 'all' ? '🌐 SEMUA BERITA' : '🔥 HIGH IMPACT ONLY';
+      const displayEvents = filtered.slice(0, 10);
+      const modeTitle = mode === 'passed' 
+        ? '√ SUDAH DILEWATI (1 BULAN INI)' 
+        : mode === 'upcoming' 
+        ? '⏳ AKAN DATANG (UPCOMING)' 
+        : mode === 'high' 
+        ? '🔴 HIGH IMPACT XAUUSD' 
+        : '🥇 XAUUSD IMPACT ONLY (GOLD)';
 
-      let msg = `📰 <b>KALENDER FOREX & ECONOMIC NEWS</b>\n` +
+      let msg = `📰 <b>KALENDER NEWS XAUUSD (GOLD ONLY)</b>\n` +
                 `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                `Filter: <b>${modeTitle}</b> | Waktu: <b>WIB (UTC+7)</b>\n` +
-                (fallbackNote ? `${fallbackNote}\n` : '\n');
+                `🎯 <b>Filter:</b> ${modeTitle}\n` +
+                `💡 <i>Khusus berita berdampak langsung ke Emas (USD High/Med Impact).</i>\n` +
+                `⏰ Waktu: <b>WIB (Jakarta UTC+7)</b> | Tanda <b>√</b> = Telah dilewati\n\n`;
 
       displayEvents.forEach(item => {
-        const evDate = new Date(item.date);
-        const dateStr = evDate.toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Asia/Jakarta' });
-        const timeStr = evDate.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Jakarta' }).replace('.', ':');
         const flag = getCurrencyFlag(item.country);
         const badge = getNewsImpactBadge(item.impact);
+        const statusBadge = item.is_passed 
+          ? `✅ <b>√ [SUDAH DILEWATI]</b>` 
+          : `⏳ <b>[AKAN DATANG]</b>`;
 
-        msg += `📅 <b>${dateStr}</b> - <b>${timeStr} WIB</b>\n` +
+        msg += `${statusBadge}\n` +
+               `📅 <b>${item.date_wib}</b> - <b>${item.time_wib}</b>\n` +
                `${flag} <b>${item.country}</b> | ${badge}\n` +
                `📌 <b>${item.title}</b>\n`;
-        if (item.forecast || item.previous) {
-          msg += `   <i>Forecast: ${item.forecast || '-'} | Prev: ${item.previous || '-'}</i>\n`;
+        
+        const details = [];
+        if (item.actual) details.push(`Actual: <b>${item.actual}</b>`);
+        if (item.forecast) details.push(`Forecast: ${item.forecast}`);
+        if (item.previous) details.push(`Prev: ${item.previous}`);
+        
+        if (details.length > 0) {
+          msg += `   <i>${details.join(' | ')}</i>\n`;
         }
         msg += `\n`;
       });
 
       msg += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-             `<i>⚠️ Waspadai lonjakan spread & slippage menjelang berita High Impact dirilis!</i>`;
+             `<i>⚠️ Catatan: Waspadai pergerakan ekstrem XAUUSD saat rilis berita bertanda 🔴 [HIGH]!</i>`;
 
       const customButtons = [
         [
-          { text: '🔥 High Impact', callback_data: 'news_high' },
-          { text: '📅 Hari Ini', callback_data: 'news_today' }
+          { text: '🥇 XAUUSD Terkini', callback_data: 'news_xauusd' },
+          { text: '🔴 High Impact Saja', callback_data: 'news_high' }
         ],
         [
-          { text: '🇺🇸 USD Saja (Gold)', callback_data: 'news_usd' },
-          { text: '🌐 Semua Berita', callback_data: 'news_all' }
+          { text: '√ Sudah Dilewati (1 Bln)', callback_data: 'news_passed' },
+          { text: '⏳ Akan Datang', callback_data: 'news_upcoming' }
         ],
         [
           { text: '🔄 Refresh News', callback_data: 'news_refresh' }
@@ -1862,15 +1924,18 @@ export function initTelegramBot(db: any) {
     }
   };
 
-  bot.command('news', (ctx) => handleNews(ctx, 'high'));
-  bot.action('cmd_news', (ctx) => handleNews(ctx, 'high'));
+  bot.command('news', (ctx) => handleNews(ctx, 'xauusd'));
+  bot.action('cmd_news', (ctx) => handleNews(ctx, 'xauusd'));
+  bot.action('news_xauusd', (ctx) => handleNews(ctx, 'xauusd'));
+  bot.action('news_passed', (ctx) => handleNews(ctx, 'passed'));
+  bot.action('news_upcoming', (ctx) => handleNews(ctx, 'upcoming'));
   bot.action('news_high', (ctx) => handleNews(ctx, 'high'));
-  bot.action('news_today', (ctx) => handleNews(ctx, 'today'));
-  bot.action('news_usd', (ctx) => handleNews(ctx, 'usd'));
-  bot.action('news_all', (ctx) => handleNews(ctx, 'all'));
+  bot.action('news_today', (ctx) => handleNews(ctx, 'xauusd'));
+  bot.action('news_usd', (ctx) => handleNews(ctx, 'xauusd'));
+  bot.action('news_all', (ctx) => handleNews(ctx, 'xauusd'));
   bot.action('news_refresh', async (ctx) => {
-    cachedNews = null;
-    await handleNews(ctx, 'high');
+    await getXauusdEconomicNews(true);
+    await handleNews(ctx, 'xauusd');
   });
 
   // COMMAND: /deposit & /wd
@@ -2871,16 +2936,20 @@ export function initTelegramBot(db: any) {
       const isWin = result.toUpperCase() === 'WIN';
       const pips = calculatePips(pair, entry, tp, pnl, lot, isWin, user?.currency === 'NANO');
 
+      const sess = getWibTimeAndSession();
+
       const ins = await db.execute({
         sql: `INSERT INTO trades (
           user_id, pair, direction, setup_name, entry_price, sl, tp, 
           account_balance, position_size, result, realized_pl, pips,
-          image, image_url, has_image, anxiety_level, notes, run_mode, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 2, ?, ?, CURRENT_TIMESTAMP)`,
+          image, image_url, has_image, anxiety_level, notes, run_mode,
+          session, trade_time, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 2, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
         args: [
           actualUserId, pair, direction, notes || 'Screenshot Journal', entry, sl, tp,
           0, lot, result, pnl, pips,
-          base64Img, base64Img, notes, mode
+          base64Img, base64Img, notes, mode,
+          sess.sessionName, sess.timeStr
         ]
       });
 
@@ -2896,6 +2965,7 @@ export function initTelegramBot(db: any) {
                   `📦 <b>Lot:</b> ${lot}\n` +
                   (entry > 0 ? `🎯 <b>Entry:</b> ${entry}\n` : '') +
                   (sl > 0 ? `🛑 <b>SL:</b> ${sl} | 🎯 <b>TP:</b> ${tp}\n` : '') +
+                  `🕒 <b>Waktu:</b> <b>${sess.timeStr} WIB</b> (${sess.sessionDisplay})\n` +
                   `🏆 <b>Status:</b> <b>${result}</b>\n` +
                   `💵 <b>Realized P/L:</b> <b>${signPL}$${pnl.toFixed(2)}</b>\n` +
                   `📏 <b>Pips:</b> <b>${signPips}${pips} Pips</b>\n` +

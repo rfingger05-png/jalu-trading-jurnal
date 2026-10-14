@@ -124,4 +124,65 @@ export function safeFormatDate(val: any, formatPattern: string, fallback: string
   }
 }
 
+export type TradingSessionInfo = {
+  name: 'Asian' | 'London' | 'Overlap' | 'New York';
+  displayName: string;
+  icon: string;
+  timeRange: string;
+  color: string;
+};
+
+export function detectTradingSession(timeOrDate?: string | Date): TradingSessionInfo {
+  let hour = new Date().getHours();
+  if (timeOrDate) {
+    if (typeof timeOrDate === 'string' && timeOrDate.includes(':')) {
+      const parts = timeOrDate.split(':');
+      const h = parseInt(parts[0], 10);
+      if (!isNaN(h)) hour = h;
+    } else {
+      const d = safeParseDate(timeOrDate);
+      hour = d.getHours();
+    }
+  }
+
+  // Indonesian / standard market session hours (WIB, UTC+7)
+  // Asian (Tokyo/Sydney): 06:00 - 14:00 WIB
+  // London (European): 14:00 - 19:00 WIB
+  // Overlap London - New York (Peak Volatility for XAUUSD): 19:00 - 23:00 WIB
+  // New York (US): 23:00 - 06:00 WIB
+  if (hour >= 6 && hour < 14) {
+    return {
+      name: 'Asian',
+      displayName: 'Sesi Asia (Tokyo/Sydney)',
+      icon: '🌏',
+      timeRange: '06:00 - 14:00 WIB',
+      color: 'text-amber-500 bg-amber-500/10 border-amber-500/20'
+    };
+  } else if (hour >= 14 && hour < 19) {
+    return {
+      name: 'London',
+      displayName: 'Sesi London (Eropa)',
+      icon: '🏛️',
+      timeRange: '14:00 - 19:00 WIB',
+      color: 'text-sky-500 bg-sky-500/10 border-sky-500/20'
+    };
+  } else if (hour >= 19 && hour < 23) {
+    return {
+      name: 'Overlap',
+      displayName: 'Overlap London-NY (High Volatility)',
+      icon: '⚡',
+      timeRange: '19:00 - 23:00 WIB',
+      color: 'text-purple-500 bg-purple-500/10 border-purple-500/20'
+    };
+  } else {
+    return {
+      name: 'New York',
+      displayName: 'Sesi New York (US)',
+      icon: '🗽',
+      timeRange: '23:00 - 06:00 WIB',
+      color: 'text-emerald-500 bg-emerald-500/10 border-emerald-500/20'
+    };
+  }
+}
+
 

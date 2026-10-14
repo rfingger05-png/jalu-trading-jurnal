@@ -1,8 +1,8 @@
-import React from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useForm, Controller } from 'react-hook-form';
 import { cn } from '../lib/utils';
-import { Check, Info, Skull } from 'lucide-react';
-import { formatCurrency, resizeImage, authFetch } from '../utils';
+import { Check, Info, Skull, Clock, Compass } from 'lucide-react';
+import { formatCurrency, resizeImage, authFetch, detectTradingSession, TradingSessionInfo } from '../utils';
 import { User } from '../types';
 
 type FormValues = {
@@ -20,6 +20,8 @@ type FormValues = {
   notes: string;
   result: 'Pending' | 'Win' | 'Loss' | 'Breakeven';
   image: string | null;
+  trade_time?: string;
+  session?: string;
 };
 
 
@@ -42,6 +44,20 @@ export const Label = ({ children, className }: { children: React.ReactNode, clas
 );
 
 export default function TradeForm({ onTradeAdded, currentEquity = 10000, user }: { onTradeAdded: () => void, currentEquity?: number, user?: User | null }) {
+  // Current time (HH:mm)
+  const getCurrentTime = () => {
+    const now = new Date();
+    const h = String(now.getHours()).padStart(2, '0');
+    const m = String(now.getMinutes()).padStart(2, '0');
+    return `${h}:${m}`;
+  };
+
+  const [tradeTime, setTradeTime] = useState<string>(getCurrentTime());
+  const detectedSession = useMemo(() => detectTradingSession(tradeTime), [tradeTime]);
+  const [customSession, setCustomSession] = useState<string>('');
+
+  const activeSession = customSession || detectedSession.name;
+
   const { register, handleSubmit, watch, control, reset, setValue, formState: { errors, isValid } } = useForm<FormValues>({
     defaultValues: {
       direction: 'Buy',
@@ -56,7 +72,7 @@ export default function TradeForm({ onTradeAdded, currentEquity = 10000, user }:
   });
 
   // Keep account_balance in sync with currentEquity if it changes externally
-  React.useEffect(() => {
+  useEffect(() => {
     setValue('account_balance', currentEquity);
   }, [currentEquity, setValue]);
 
@@ -127,7 +143,9 @@ export default function TradeForm({ onTradeAdded, currentEquity = 10000, user }:
       notes: data.notes,
       result: data.result,
       realized_pl,
-      image: data.image
+      image: data.image,
+      session: activeSession,
+      trade_time: tradeTime
     };
 
     try {
@@ -138,6 +156,8 @@ export default function TradeForm({ onTradeAdded, currentEquity = 10000, user }:
       });
       if (res.ok) {
         reset();
+        setTradeTime(getCurrentTime());
+        setCustomSession('');
         onTradeAdded();
       } else {
         console.error("Failed to save. Server responded with:", await res.text());
@@ -153,6 +173,44 @@ export default function TradeForm({ onTradeAdded, currentEquity = 10000, user }:
         <h2 className="text-xs font-bold uppercase tracking-widest text-slate-400">1. Trade Parameters</h2>
         
         <div className="grid grid-cols-2 gap-3">
+          {/* Jam Entry & Deteksi Sesi Otomatis */}
+          <div className="flex flex-col gap-1 col-span-2 p-3 bg-slate-50 dark:bg-neutral-950/70 border border-slate-200 dark:border-neutral-800 rounded-sm">
+            <div className="flex items-center justify-between mb-1">
+              <Label className="flex items-center gap-1.5 text-slate-700 dark:text-neutral-300">
+                <Clock size={12} className="text-cyan-500" />
+                <span>Jam Entry & Deteksi Sesi Otomatis</span>
+              </Label>
+              <button
+                type="button"
+                onClick={() => setTradeTime(getCurrentTime())}
+                className="text-[10px] text-cyan-600 dark:text-cyan-400 font-bold hover:underline cursor-pointer"
+              >
+                Set Jam Sekarang
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 items-center">
+              <div>
+                <input
+                  type="time"
+                  value={tradeTime}
+                  onChange={e => setTradeTime(e.target.value)}
+                  className="border border-slate-300 dark:border-neutral-700 p-2 text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:border-cyan-600 rounded-sm bg-white dark:bg-neutral-900 w-full"
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <div className={cn("w-full px-3 py-1.5 border rounded-sm flex items-center justify-between text-xs font-semibold", detectedSession.color)}>
+                  <span className="flex items-center gap-1.5">
+                    <span>{detectedSession.icon}</span>
+                    <span>{detectedSession.displayName}</span>
+                  </span>
+                  <span className="text-[10px] opacity-80 font-mono">{detectedSession.timeRange}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div className="flex flex-col gap-1">
             <Label>Pair</Label>
             <Input {...register('pair', { required: true })} placeholder="XAUUSD" />

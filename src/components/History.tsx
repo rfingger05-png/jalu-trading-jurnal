@@ -2,8 +2,8 @@ import React, { useState } from 'react';
 import { Trade } from '../types';
 import { cn } from '../lib/utils';
 import { format, isSameDay, isSameWeek, isSameMonth } from 'date-fns';
-import { Sparkles, CheckCircle2, Edit2, Upload, Trash2, Camera, Image as ImageIcon } from 'lucide-react';
-import { formatCurrency, formatImageUrl, authFetch } from '../utils';
+import { Sparkles, CheckCircle2, Edit2, Upload, Trash2, Camera, Image as ImageIcon, Clock } from 'lucide-react';
+import { formatCurrency, formatImageUrl, authFetch, detectTradingSession } from '../utils';
 import EditTradeModal from './EditTradeModal';
 import ImportTradesModal from './ImportTradesModal';
 
@@ -272,8 +272,40 @@ export default function History({ trades, onTradeUpdated, user }: { trades: Trad
   trade.result && trade.result.toLowerCase() === 'win' ? "bg-emerald-50/50 dark:bg-emerald-950/20" : 
   trade.result && trade.result.toLowerCase() === 'loss' ? "bg-red-50/50 dark:bg-red-950/20" : 
   idx % 2 !== 0 ? "bg-slate-50 dark:bg-neutral-950/30" : "")}>
-                          <td className="px-4 py-3 text-slate-400 whitespace-nowrap">
-                            {format(parseDateStr(trade.created_at), 'HH:mm')}
+                          <td className="px-4 py-3 whitespace-nowrap">
+                            <div className="flex flex-col gap-1">
+                              <div className="flex items-center gap-1.5 font-mono text-xs font-bold text-slate-800 dark:text-neutral-200">
+                                <Clock size={11} className="text-cyan-500" />
+                                <span>{trade.trade_time || format(parseDateStr(trade.created_at), 'HH:mm')}</span>
+                                <span className="text-[9px] font-sans font-normal text-slate-400">WIB</span>
+                              </div>
+                              {/* Market Session Badge */}
+                              {(() => {
+                                const sessInfo = detectTradingSession(trade.trade_time || trade.created_at);
+                                const displaySess = trade.session || sessInfo.name;
+                                let badgeColor = 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-neutral-800 dark:text-neutral-400';
+                                let icon = '🏛️';
+                                if (displaySess === 'Overlap') {
+                                  badgeColor = 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20';
+                                  icon = '⚡';
+                                } else if (displaySess === 'London') {
+                                  badgeColor = 'bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20';
+                                  icon = '🏛️';
+                                } else if (displaySess === 'New York') {
+                                  badgeColor = 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20';
+                                  icon = '🗽';
+                                } else if (displaySess === 'Asian') {
+                                  badgeColor = 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20';
+                                  icon = '🌏';
+                                }
+                                return (
+                                  <span className={cn("text-[8px] font-bold px-1.5 py-0.5 rounded-xs border inline-flex items-center gap-1 w-fit", badgeColor)}>
+                                    <span>{icon}</span>
+                                    <span>{displaySess}</span>
+                                  </span>
+                                );
+                              })()}
+                            </div>
                           </td>
                           <td className="px-4 py-3">
                             <span className="font-bold">{trade.pair || 'N/A'}</span>

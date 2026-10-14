@@ -1,14 +1,19 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Trade } from '../types';
-import { X } from 'lucide-react';
+import { X, Clock } from 'lucide-react';
 import { Input, Label } from './TradeForm';
-import { resizeImage, formatImageUrl, authFetch } from '../utils';
+import { resizeImage, formatImageUrl, authFetch, detectTradingSession } from '../utils';
+import { cn } from '../lib/utils';
 
 export default function EditTradeModal({ trade, onClose, onUpdated }: { trade: Trade, onClose: () => void, onUpdated: () => void }) {
   const [result, setResult] = useState(trade.result);
   const [realizedPL, setRealizedPL] = useState<string>(trade.realized_pl !== null ? String(trade.realized_pl) : '');
   const [notes, setNotes] = useState(trade.notes || '');
   const [image, setImage] = useState<string | null>(trade.image || trade.image_url || null);
+  const [tradeTime, setTradeTime] = useState<string>(trade.trade_time || '12:00');
+  const detectedSession = useMemo(() => detectTradingSession(tradeTime), [tradeTime]);
+  const [customSession, setCustomSession] = useState<string>(trade.session || '');
+  const activeSession = customSession || detectedSession.name;
   const [loading, setLoading] = useState(false);
 
   const handleSave = async () => {
@@ -29,7 +34,9 @@ export default function EditTradeModal({ trade, onClose, onUpdated }: { trade: T
           result,
           realized_pl,
           notes,
-          image
+          image,
+          trade_time: tradeTime,
+          session: activeSession
         })
       });
       onUpdated();
@@ -51,32 +58,57 @@ export default function EditTradeModal({ trade, onClose, onUpdated }: { trade: T
         
         <div className="p-6 overflow-y-auto flex flex-col gap-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="flex flex-col gap-2">
-            <Label>Profit / Loss</Label>
-            <Input 
-              type="number" 
-              step="any"
-              value={realizedPL}
-              onChange={e => setRealizedPL(e.target.value)}
-              placeholder="0.00"
-            />
-          </div>
-          <div className="flex flex-col gap-2">
-            <Label>Result</Label>
-            <div className="grid grid-cols-2 gap-2">
-              {(['Pending', 'Win', 'Loss', 'Breakeven'] as const).map(res => (
-                <button
-                  key={res}
-                  type="button"
-                  onClick={() => setResult(res)}
-                  className={`py-2 text-[10px] font-bold uppercase tracking-wider border transition-colors ${result === res ? 'bg-black text-white border-black dark:bg-white dark:text-black dark:border-white' : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100 dark:bg-neutral-900 dark:border-neutral-700 dark:hover:bg-neutral-800'}`}
-                >
-                  {res}
-                </button>
-              ))}
+            <div className="flex flex-col gap-2">
+              <Label>Profit / Loss</Label>
+              <Input 
+                type="number" 
+                step="any"
+                value={realizedPL}
+                onChange={e => setRealizedPL(e.target.value)}
+                placeholder="0.00"
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label>Result</Label>
+              <div className="grid grid-cols-2 gap-2">
+                {(['Pending', 'Win', 'Loss', 'Breakeven'] as const).map(res => (
+                  <button
+                    key={res}
+                    type="button"
+                    onClick={() => setResult(res)}
+                    className={`py-2 text-[10px] font-bold uppercase tracking-wider border transition-colors ${result === res ? 'bg-black text-white border-black dark:bg-white dark:text-black dark:border-white' : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100 dark:bg-neutral-900 dark:border-neutral-700 dark:hover:bg-neutral-800'}`}
+                  >
+                    {res}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
-        </div>
+
+          {/* Jam Entry & Deteksi Sesi Otomatis */}
+          <div className="p-3 bg-slate-50 dark:bg-neutral-950/60 border border-slate-200 dark:border-neutral-800 rounded-xs flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <Label className="flex items-center gap-1.5 text-cyan-600 dark:text-cyan-400">
+                <Clock size={12} />
+                <span>Jam Entry & Deteksi Sesi</span>
+              </Label>
+              <span className="text-[10px] font-mono text-slate-400 font-semibold">{detectedSession.timeRange}</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 items-center">
+              <input
+                type="time"
+                value={tradeTime}
+                onChange={e => setTradeTime(e.target.value)}
+                className="border border-slate-300 dark:border-neutral-700 p-2 text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:border-cyan-600 rounded-sm bg-white dark:bg-neutral-900 w-full"
+              />
+              <div className={cn("w-full px-3 py-1.5 border rounded-sm flex items-center justify-between text-xs font-semibold", detectedSession.color)}>
+                <span className="flex items-center gap-1.5">
+                  <span>{detectedSession.icon}</span>
+                  <span>{detectedSession.displayName}</span>
+                </span>
+              </div>
+            </div>
+          </div>
 
           <div className="flex flex-col gap-2">
             <Label>Notes</Label>

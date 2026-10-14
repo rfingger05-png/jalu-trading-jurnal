@@ -10,6 +10,7 @@ import Calculators from './components/Calculators';
 import PropFirm from './components/PropFirm';
 import PublicProfile from './components/PublicProfile';
 import BankingModal from './components/BankingModal';
+import EconomicCalendarModal from './components/EconomicCalendarModal';
 import { 
   Menu, 
   X, 
@@ -24,7 +25,8 @@ import {
   Settings as SettingsIcon,
   LogOut,
   TrendingUp,
-  User as UserIcon
+  User as UserIcon,
+  Newspaper
 } from 'lucide-react';
 import { formatCurrency, authFetch, setAuthToken } from './utils';
 
@@ -51,6 +53,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'log' | 'history' | 'propfirm' | 'calculators' | 'admin' | 'settings'>('dashboard');
   const [menuOpen, setMenuOpen] = useState(false);
   const [showBankingModal, setShowBankingModal] = useState(false);
+  const [showNewsModal, setShowNewsModal] = useState(false);
 
   const [darkMode, setDarkMode] = useState(() => {
     return localStorage.getItem('darkMode') === 'true';
@@ -280,6 +283,16 @@ export default function App() {
           </button>
 
           <button
+            onClick={() => setShowNewsModal(true)}
+            className="px-3 py-1.5 rounded transition-colors whitespace-nowrap flex items-center gap-1.5 text-amber-600 dark:text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 font-bold border border-amber-500/20 cursor-pointer"
+            title="Kalender Berita Emas (XAUUSD)"
+          >
+            <Newspaper size={14} />
+            <span>News XAUUSD</span>
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+          </button>
+
+          <button
             onClick={() => setActiveTab('settings')}
             className={`px-3 py-1.5 rounded transition-colors whitespace-nowrap flex items-center gap-1.5 ${
               activeTab === 'settings'
@@ -419,6 +432,14 @@ export default function App() {
               </button>
 
               <button
+                onClick={() => { setShowNewsModal(true); setMenuOpen(false); }}
+                className="p-2.5 rounded text-left flex items-center gap-2.5 text-amber-600 dark:text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 font-bold border border-amber-500/20"
+              >
+                <Newspaper size={16} />
+                <span>News XAUUSD (Gold)</span>
+              </button>
+
+              <button
                 onClick={() => { setActiveTab('settings'); setMenuOpen(false); }}
                 className={`p-2.5 rounded text-left flex items-center gap-2.5 ${activeTab === 'settings' ? 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white font-semibold' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'}`}
               >
@@ -522,6 +543,13 @@ export default function App() {
             setShowBankingModal(false);
             fetchTrades();
           }}
+        />
+      )}
+
+      {/* Economic News Calendar Modal (XAUUSD Gold Only) */}
+      {showNewsModal && (
+        <EconomicCalendarModal
+          onClose={() => setShowNewsModal(false)}
         />
       )}
 

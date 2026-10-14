@@ -19,6 +19,8 @@ export type Trade = {
   image_url?: string | null;
   has_image?: number | boolean;
   run_mode: 'backtest' | 'demo';
+  session?: string | null;
+  trade_time?: string | null;
   created_at: string;
 };
 
