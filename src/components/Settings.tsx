@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { User } from '../types';
-import { TestTubeDiagonal, MonitorPlay, Check, AlertCircle, Trash2, RefreshCw } from 'lucide-react';
+import { Check, AlertCircle, Trash2, Shield, Sliders, Send, Moon, Sun, Copy } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { authFetch } from '../utils';
 
@@ -8,12 +8,11 @@ interface SettingsProps {
   user: User | null;
   onUserUpdate: () => void;
   onLocalUpdate?: (updates: Partial<User>) => void;
-  onModeChange: () => void;
+  onModeChange?: () => void;
   onLogout: () => void;
 }
 
-export default function Settings({ user, onUserUpdate, onLocalUpdate, onModeChange, onLogout }: SettingsProps) {
-  const [loading, setLoading] = useState(false);
+export default function Settings({ user, onUserUpdate, onLocalUpdate, onLogout }: SettingsProps) {
   const [error, setError] = useState<string | null>(null);
 
   const [currency, setCurrency] = useState(user?.currency || 'USD');
@@ -24,6 +23,11 @@ export default function Settings({ user, onUserUpdate, onLocalUpdate, onModeChan
   const [balanceSaving, setBalanceSaving] = useState(false);
   const [balanceSuccess, setBalanceSuccess] = useState(false);
 
+  // Risk profile defaults (saved to localStorage)
+  const [defaultRisk, setDefaultRisk] = useState<string>(() => localStorage.getItem('jurnalku_default_risk') || '1.0');
+  const [defaultSl, setDefaultSl] = useState<string>(() => localStorage.getItem('jurnalku_default_sl') || '30');
+  const [riskSuccess, setRiskSuccess] = useState(false);
+
   const [telegramTag, setTelegramTag] = useState(user?.telegram_tag || '');
   const [telegramIdInput, setTelegramIdInput] = useState(user?.telegram_id || '');
   const [telegramSaving, setTelegramSaving] = useState(false);
@@ -31,6 +35,22 @@ export default function Settings({ user, onUserUpdate, onLocalUpdate, onModeChan
 
   const [linkCopied, setLinkCopied] = useState(false);
   const [botStatus, setBotStatus] = useState<{ configured: boolean; authenticated: boolean; username: string | null; error: string | null } | null>(null);
+
+  // Dark mode
+  const [darkMode, setDarkMode] = useState(() => {
+    return localStorage.getItem('darkMode') !== 'false';
+  });
+
+  const toggleDarkMode = () => {
+    const next = !darkMode;
+    setDarkMode(next);
+    localStorage.setItem('darkMode', String(next));
+    if (next) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  };
 
   // Reset data state
   const [confirmReset, setConfirmReset] = useState(false);
@@ -151,391 +171,333 @@ export default function Settings({ user, onUserUpdate, onLocalUpdate, onModeChan
     }
   };
 
-  const handleModeChange = async (mode: 'backtest' | 'demo') => {
-    if (user?.current_mode === mode) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await authFetch('/api/auth/mode', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode })
-      });
-      if (res.ok) {
-         await onUserUpdate(); // fetch new trades and user details
-         onModeChange(); // also trigger re-fetch of trades via App props
-      } else {
-         setError("Failed to change mode");
-      }
-    } catch(e) {
-      setError("An unexpected error occurred");
-      console.error("Failed to change mode");
-    } finally {
-      setLoading(false);
-    }
+  const saveRiskDefaults = (e: React.FormEvent) => {
+    e.preventDefault();
+    localStorage.setItem('jurnalku_default_risk', defaultRisk);
+    localStorage.setItem('jurnalku_default_sl', defaultSl);
+    setRiskSuccess(true);
+    setTimeout(() => setRiskSuccess(false), 3000);
   };
 
   return (
-    <div className="flex-1 flex justify-center p-4 sm:p-8 overflow-y-auto w-full">
-      <div className="w-full max-w-2xl bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 shadow-sm flex flex-col h-fit">
-        <div className="p-6 sm:p-8 border-b border-slate-100 dark:border-neutral-800 flex flex-col gap-2">
-          <h2 className="text-xl font-bold tracking-tighter uppercase">Environment Settings</h2>
-          <p className="text-slate-500 dark:text-neutral-500 text-sm">Configure your trading journal workspace.</p>
+    <div className="flex-1 overflow-y-auto bg-[#0D0D0D] text-white p-4 sm:p-6 lg:p-8 font-sans">
+      <div className="max-w-3xl mx-auto space-y-6">
+
+        {/* Header */}
+        <div className="pb-4 border-b border-[#2D2D2D]">
+          <div className="flex items-center gap-2 text-xs font-mono text-[#A3A3A3]">
+            <span className="uppercase tracking-wider">SETTINGS</span>
+            <span className="text-[#404040]">/</span>
+            <span className="text-white font-bold">LIVE ACCOUNT CONFIGURATION</span>
+          </div>
+          <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-white mt-1">
+            Trading System Preferences
+          </h1>
+          <p className="text-xs text-[#A3A3A3] mt-0.5">
+            Konfigurasi saldo awal, profil risiko XAUUSD, integrasi Telegram bot, dan preferensi tampilan.
+          </p>
         </div>
 
-        <div className="p-6 sm:p-8 flex flex-col gap-8">
-           {error && (
-             <div className="bg-red-50 text-red-600 p-4 rounded-sm border border-red-100 flex items-center gap-2 text-sm font-medium">
-               <AlertCircle size={16} />
-               {error}
-             </div>
-           )}
+        {error && (
+          <div className="bg-[#FF3333]/15 text-[#FF3333] p-4 rounded-lg border border-[#FF3333]/40 flex items-center gap-2 text-xs font-mono">
+            <AlertCircle size={15} />
+            <span>{error}</span>
+          </div>
+        )}
 
-           <div className="flex flex-col gap-4">
-              <h3 className="text-xs font-bold uppercase tracking-widest text-slate-400">Trading Mode</h3>
-              
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                 <button 
-                   onClick={() => handleModeChange('backtest')}
-                   className={cn(
-                     "relative p-6 border text-left flex flex-col gap-4 rounded-sm transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-black",
-                     user?.current_mode === 'backtest' 
-                       ? "border-black dark:border-neutral-500 bg-slate-50 dark:bg-neutral-950 shadow-sm ring-1 ring-black" 
-                       : "border-slate-200 dark:border-neutral-800 hover:border-slate-300 dark:border-neutral-700 hover:bg-slate-50 dark:bg-neutral-950"
-                   )}
-                   disabled={loading}
-                 >
-                   {user?.current_mode === 'backtest' && (
-                     <div className="absolute top-4 right-4 text-black dark:text-neutral-100">
-                       <Check size={20} />
-                     </div>
-                   )}
-                   <div className={cn(
-                     "w-10 h-10 flex items-center justify-center rounded-sm",
-                     user?.current_mode === 'backtest' ? "bg-black dark:bg-neutral-200 text-white dark:text-neutral-900" : "bg-slate-100 dark:bg-neutral-950 text-slate-500 dark:text-neutral-500"
-                   )}>
-                     <TestTubeDiagonal size={20} />
-                   </div>
-                   <div className="flex flex-col gap-1">
-                     <span className={cn(
-                       "font-bold uppercase tracking-widest text-sm",
-                       user?.current_mode === 'backtest' ? "text-black dark:text-neutral-100" : "text-slate-700 dark:text-neutral-400"
-                     )}>Backtest</span>
-                     <span className="text-xs text-slate-500 dark:text-neutral-500 leading-relaxed">
-                       Log hypothetical trades for continuous testing and strategy validation. Your statistics are separated.
-                     </span>
-                   </div>
-                 </button>
-                 
-                 <button 
-                   onClick={() => handleModeChange('demo')}
-                   className={cn(
-                     "relative p-6 border text-left flex flex-col gap-4 rounded-sm transition-all focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-black",
-                     user?.current_mode === 'demo' 
-                       ? "border-black dark:border-neutral-500 bg-slate-50 dark:bg-neutral-950 shadow-sm ring-1 ring-black" 
-                       : "border-slate-200 dark:border-neutral-800 hover:border-slate-300 dark:border-neutral-700 hover:bg-slate-50 dark:bg-neutral-950"
-                   )}
-                   disabled={loading}
-                 >
-                   {user?.current_mode === 'demo' && (
-                     <div className="absolute top-4 right-4 text-black dark:text-neutral-100">
-                       <Check size={20} />
-                     </div>
-                   )}
-                   <div className={cn(
-                     "w-10 h-10 flex items-center justify-center rounded-sm",
-                     user?.current_mode === 'demo' ? "bg-black dark:bg-neutral-200 text-white dark:text-neutral-900" : "bg-slate-100 dark:bg-neutral-950 text-slate-500 dark:text-neutral-500"
-                   )}>
-                     <MonitorPlay size={20} />
-                   </div>
-                   <div className="flex flex-col gap-1">
-                     <span className={cn(
-                       "font-bold uppercase tracking-widest text-sm",
-                       user?.current_mode === 'demo' ? "text-black dark:text-neutral-100" : "text-slate-700 dark:text-neutral-400"
-                     )}>Paper Trade</span>
-                     <span className="text-xs text-slate-500 dark:text-neutral-500 leading-relaxed">
-                       Log trades for paper trading sessions replicating live conditions. Helps identify psychological edges.
-                     </span>
-                   </div>
-                 </button>
-              </div>
-           </div>
+        {/* Section 1: Starting Balance & Currency */}
+        <div className="bg-[#1A1A1A] rounded-xl border border-[#2D2D2D] p-5 sm:p-6 space-y-5 shadow-xs">
+          <div className="flex items-center gap-2 pb-3 border-b border-[#262626]">
+            <Shield size={16} className="text-[#00E676]" />
+            <h2 className="text-sm font-bold uppercase tracking-wider text-white font-mono">
+              Account Starting Balance & Currency
+            </h2>
+          </div>
 
-           
-           <div className="flex flex-col gap-4 border-t border-slate-100 dark:border-neutral-800 pt-8 mt-4">
-              <h3 className="text-xs font-bold uppercase tracking-widest text-slate-600 dark:text-neutral-400">Account Balance</h3>
-              <div className="flex flex-col gap-4 max-w-sm">
-                <div className="flex flex-col gap-1">
-                  <span className="text-xs text-slate-500 dark:text-neutral-500 mb-1">
-                    Set a manual starting balance (e.g. 10000 for a $10k challenge). Leave empty to use auto-calculated default.
-                  </span>
-                  <input 
-                    type="number" 
-                    step="any"
-                    value={initialBalance}
-                    onChange={(e) => setInitialBalance(e.target.value)}
-                    placeholder="Auto (10000)"
-                    className="border border-slate-300 dark:border-neutral-700 p-2 text-sm focus:outline-none focus:border-black dark:border-neutral-500 rounded-sm bg-slate-50 dark:bg-neutral-950"
-                  />
-                </div>
-                
-                <div className="flex items-center gap-3">
-                  <button 
-                    onClick={saveBalance}
-                    disabled={balanceSaving}
-                    className="px-4 py-2 bg-black dark:bg-neutral-200 text-white dark:text-neutral-900 text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-colors disabled:opacity-50"
-                  >
-                    {balanceSaving ? 'Saving...' : 'Save Balance'}
-                  </button>
-                  {balanceSuccess && <span className="text-xs text-emerald-600 font-bold flex items-center gap-1"><Check size={14}/> Saved</span>}
-                </div>
-              </div>
-           </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+            {/* Initial Balance */}
+            <div className="space-y-2">
+              <label className="text-xs font-mono font-semibold text-[#A3A3A3] block">
+                Starting Capital / Balance
+              </label>
+              <input
+                type="number"
+                step="any"
+                value={initialBalance}
+                onChange={(e) => setInitialBalance(e.target.value)}
+                placeholder="10000"
+                className="w-full bg-[#121212] border border-[#2D2D2D] rounded-md px-3 py-2 text-xs font-mono text-white focus:border-[#00E676] focus:outline-none"
+              />
+              <p className="text-[11px] text-[#737373] font-mono leading-tight">
+                Saldo awal akun sebagai baseline kalkulasi profit % dan equity curve.
+              </p>
+              <button
+                onClick={saveBalance}
+                disabled={balanceSaving}
+                className="px-3.5 py-1.5 bg-[#262626] hover:bg-[#333333] text-white text-[11px] font-mono font-bold uppercase rounded transition-colors cursor-pointer disabled:opacity-50 mt-1 flex items-center gap-1.5"
+              >
+                {balanceSaving ? 'Saving...' : 'Save Balance'}
+                {balanceSuccess && <Check size={12} className="text-[#00E676]" />}
+              </button>
+            </div>
 
-           <div className="flex flex-col gap-4 border-t border-slate-100 dark:border-neutral-800 pt-8 mt-4">
-              <h3 className="text-xs font-bold uppercase tracking-widest text-slate-600 dark:text-neutral-400">Base Currency</h3>
-              <div className="flex flex-col gap-4 max-w-sm">
-                <div className="flex flex-col gap-1">
-                  <span className="text-xs text-slate-500 dark:text-neutral-500 mb-1">
-                    Pilih tipe akun & mata uang trading Anda. Akun Nano memiliki pip value 1/10 dari akun Cent/USD.
-                  </span>
-                  <select 
-                    value={currency} 
-                    onChange={(e) => setCurrency(e.target.value)}
-                    className="border border-slate-300 dark:border-neutral-700 p-2 text-sm focus:outline-none focus:border-black dark:border-neutral-500 rounded-sm bg-slate-50 dark:bg-neutral-950"
-                  >
-                    <option value="USD">USD ($) - Akun Standard (1 pip/lot = $10)</option>
-                    <option value="USC">USC (¢) - Akun Cent (1 pip/lot = 10¢)</option>
-                    <option value="NANO">NANO (¢) - Akun Nano (1 pip/lot = 1¢ | 0.04 lot 100 pips = 4¢)</option>
-                    <option value="IDR">IDR (Rp) - Akun Rupiah</option>
-                  </select>
-                  {currency === 'NANO' && (
-                    <div className="mt-2 p-2.5 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 rounded text-[11px] text-amber-800 dark:text-amber-300">
-                      💡 <b>Mode Akun Nano Aktif:</b> Perhitungan lot dan pips otomatis disesuaikan (0.04 lot × 100 pips = 4¢). Formula: <code>Lot = Risk / (SL × 1)</code> dan <code>Pips = P/L / (Lot × 1)</code>.
-                    </div>
-                  )}
-                  {currency === 'USC' && (
-                    <div className="mt-2 p-2.5 bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/60 rounded text-[11px] text-blue-800 dark:text-blue-300">
-                      💡 <b>Mode Akun Cent Aktif:</b> Saldo dan P/L dalam Cent (USC). Transaksi 0.04 lot × 100 pips = 40¢. Formula: <code>Lot = Risk / (SL × 10)</code>.
-                    </div>
-                  )}
-                </div>
-                  
-                <div className="flex items-center gap-3">
-                  <button 
-                    onClick={saveCurrency}
-                    disabled={currencySaving}
-                    className="px-4 py-2 bg-black dark:bg-neutral-200 text-white dark:text-neutral-900 text-[10px] font-bold uppercase tracking-widest hover:bg-slate-800 transition-colors disabled:opacity-50"
-                  >
-                    {currencySaving ? 'Saving...' : 'Save Currency'}
-                  </button>
-                  {currencySuccess && <span className="text-xs text-emerald-600 font-bold flex items-center gap-1"><Check size={14}/> Saved</span>}
-                </div>
-              </div>
-           </div>
+            {/* Currency */}
+            <div className="space-y-2">
+              <label className="text-xs font-mono font-semibold text-[#A3A3A3] block">
+                Account Base Currency & Unit
+              </label>
+              <select
+                value={currency}
+                onChange={(e) => setCurrency(e.target.value)}
+                className="w-full bg-[#121212] border border-[#2D2D2D] rounded-md px-3 py-2 text-xs font-mono text-white focus:border-[#00E676] focus:outline-none cursor-pointer"
+              >
+                <option value="USD">USD ($) — Standard Account ($10/pip per 1 lot)</option>
+                <option value="USC">USC (¢) — Cent Account (10¢/pip per 1 lot)</option>
+                <option value="NANO">NANO (¢) — Nano Account (1¢/pip per 1 lot)</option>
+                <option value="IDR">IDR (Rp) — Indonesian Rupiah</option>
+              </select>
+              <p className="text-[11px] text-[#737373] font-mono leading-tight">
+                Mempengaruhi konversi pip value pada Lot Size Calculator dan P/L.
+              </p>
+              <button
+                onClick={saveCurrency}
+                disabled={currencySaving}
+                className="px-3.5 py-1.5 bg-[#262626] hover:bg-[#333333] text-white text-[11px] font-mono font-bold uppercase rounded transition-colors cursor-pointer disabled:opacity-50 mt-1 flex items-center gap-1.5"
+              >
+                {currencySaving ? 'Saving...' : 'Save Currency'}
+                {currencySuccess && <Check size={12} className="text-[#00E676]" />}
+              </button>
+            </div>
+          </div>
+        </div>
 
-           <div className="flex flex-col gap-4 border-t border-slate-100 dark:border-neutral-800 pt-8 mt-4">
-               <div className="flex items-center justify-between">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-neutral-400">Telegram Bot Integration</h3>
-                {botStatus?.authenticated ? (
-                  <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-mono font-medium flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                    Connected (@{botStatus.username})
-                  </span>
-                ) : botStatus?.error ? (
-                  <span className="text-[11px] text-rose-600 dark:text-rose-400 font-mono font-medium flex items-center gap-1.5">
-                    <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
-                    {botStatus.error.includes('401') ? 'Token Unauthorized' : 'Offline'}
-                  </span>
-                ) : (
-                  <span className="text-[11px] text-slate-500 font-mono">
-                    Not Configured
-                  </span>
-                )}
+        {/* Section 2: Default Risk Parameters (XAUUSD) */}
+        <div className="bg-[#1A1A1A] rounded-xl border border-[#2D2D2D] p-5 sm:p-6 space-y-4 shadow-xs">
+          <div className="flex items-center gap-2 pb-3 border-b border-[#262626]">
+            <Sliders size={16} className="text-[#00E676]" />
+            <h2 className="text-sm font-bold uppercase tracking-wider text-white font-mono">
+              Default Risk Parameters (XAUUSD)
+            </h2>
+          </div>
+
+          <form onSubmit={saveRiskDefaults} className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+            <div className="space-y-1.5">
+              <label className="text-xs font-mono font-semibold text-[#A3A3A3] block">
+                Default Risk per Trade (%)
+              </label>
+              <input
+                type="number"
+                step="0.1"
+                min="0.1"
+                max="10"
+                value={defaultRisk}
+                onChange={(e) => setDefaultRisk(e.target.value)}
+                className="w-full bg-[#121212] border border-[#2D2D2D] rounded-md px-3 py-2 text-xs font-mono text-white focus:border-[#00E676] focus:outline-none"
+              />
+              <span className="text-[10px] text-[#737373] font-mono">Rekomendasi profesional: 1.0% per setup.</span>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-mono font-semibold text-[#A3A3A3] block">
+                Default Stop Loss (pips)
+              </label>
+              <input
+                type="number"
+                step="1"
+                min="5"
+                max="200"
+                value={defaultSl}
+                onChange={(e) => setDefaultSl(e.target.value)}
+                className="w-full bg-[#121212] border border-[#2D2D2D] rounded-md px-3 py-2 text-xs font-mono text-white focus:border-[#00E676] focus:outline-none"
+              />
+              <span className="text-[10px] text-[#737373] font-mono">30 pips setara 300 points pada XAUUSD (Gold).</span>
+            </div>
+
+            <div className="sm:col-span-2 flex items-center gap-3">
+              <button
+                type="submit"
+                className="px-4 py-2 bg-[#00E676] hover:bg-[#00E676]/90 text-black text-xs font-mono font-bold uppercase rounded transition-colors cursor-pointer flex items-center gap-1.5"
+              >
+                <span>Save Risk Defaults</span>
+                {riskSuccess && <Check size={13} />}
+              </button>
+              {riskSuccess && (
+                <span className="text-xs font-mono text-[#00E676]">
+                  Parameter tersimpan! Digunakan pada bar Quick Trade Setup dashboard.
+                </span>
+              )}
+            </div>
+          </form>
+        </div>
+
+        {/* Section 3: Telegram Bot Integration */}
+        <div className="bg-[#1A1A1A] rounded-xl border border-[#2D2D2D] p-5 sm:p-6 space-y-4 shadow-xs">
+          <div className="flex items-center justify-between pb-3 border-b border-[#262626]">
+            <div className="flex items-center gap-2">
+              <Send size={16} className="text-sky-400" />
+              <h2 className="text-sm font-bold uppercase tracking-wider text-white font-mono">
+                Telegram Bot Integration
+              </h2>
+            </div>
+
+            {botStatus?.authenticated ? (
+              <span className="text-[11px] font-mono font-bold text-[#00E676] bg-[#00E676]/10 px-2 py-0.5 rounded border border-[#00E676]/30 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#00E676] animate-pulse"></span>
+                Connected (@{botStatus.username})
+              </span>
+            ) : (
+              <span className="text-[11px] font-mono text-[#A3A3A3] bg-[#262626] px-2 py-0.5 rounded">
+                Standby
+              </span>
+            )}
+          </div>
+
+          <form onSubmit={handleSaveTelegramTag} className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-mono font-semibold text-[#A3A3A3] block">
+                  Username Telegram Anda (@username)
+                </label>
+                <input
+                  type="text"
+                  value={telegramTag}
+                  onChange={(e) => setTelegramTag(e.target.value)}
+                  placeholder="@yourusername"
+                  className="w-full bg-[#121212] border border-[#2D2D2D] rounded-md px-3 py-2 text-xs font-mono text-white focus:border-sky-400 focus:outline-none"
+                />
               </div>
 
-               <div className="p-6 border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 flex flex-col gap-5 rounded">
-                
-                {/* Form to connect Telegram Tag */}
-                <form onSubmit={handleSaveTelegramTag} className="flex flex-col gap-3 p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded">
-                  <div className="flex flex-col gap-1">
-                    <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">
-                      Tautkan Username / Tag Telegram
-                    </span>
-                    <span className="text-xs text-slate-500 dark:text-slate-400">
-                      Masukkan username Telegram Anda (contoh: <code>@singga</code> atau <code>singga</code>) atau ID Telegram agar bot dapat mengenali Anda secara otomatis.
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-1">
-                    <div className="flex flex-col gap-1">
-                      <label className="text-[10px] font-mono uppercase tracking-wider text-slate-500">
-                        Telegram Username / Tag:
-                      </label>
-                      <input
-                        type="text"
-                        value={telegramTag}
-                        onChange={(e) => setTelegramTag(e.target.value)}
-                        placeholder="@username_anda"
-                        className="w-full px-3 py-2 text-xs font-mono border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white rounded focus:outline-none focus:border-slate-900 dark:focus:border-slate-200"
-                      />
-                    </div>
-
-                    <div className="flex flex-col gap-1">
-                      <label className="text-[10px] font-mono uppercase tracking-wider text-slate-500">
-                        Telegram ID (Opsional):
-                      </label>
-                      <input
-                        type="text"
-                        value={telegramIdInput}
-                        onChange={(e) => setTelegramIdInput(e.target.value)}
-                        placeholder="Contoh: 5061002416"
-                        className="w-full px-3 py-2 text-xs font-mono border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white rounded focus:outline-none focus:border-slate-900 dark:focus:border-slate-200"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between pt-2">
-                    <button
-                      type="submit"
-                      disabled={telegramSaving}
-                      className="px-4 py-2 bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 text-xs font-semibold uppercase tracking-wider rounded transition-colors flex items-center gap-1.5"
-                    >
-                      {telegramSaving ? 'Menyimpan...' : 'Simpan Tag Telegram'}
-                    </button>
-                    {telegramSuccess && (
-                      <span className="text-xs text-emerald-600 dark:text-emerald-400 font-semibold flex items-center gap-1">
-                        <Check size={14} /> Tag Berhasil Disimpan!
-                      </span>
-                    )}
-                  </div>
-                </form>
-
-                <div className="flex flex-col gap-3 text-xs">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-slate-700 dark:text-slate-300">Status Akun Telegram:</span>
-                    <span className="font-mono bg-white dark:bg-slate-900 px-2.5 py-1 border border-slate-200 dark:border-slate-800 rounded text-slate-800 dark:text-slate-200 tabular-nums">
-                      {user?.telegram_tag ? `@${user.telegram_tag}` : user?.telegram_id ? `ID: ${user.telegram_id}` : 'Belum terhubung'}
-                    </span>
-                  </div>
-
-                  <div className="flex flex-col gap-2 mt-1">
-                    <p className="text-slate-500 dark:text-slate-400 leading-relaxed text-xs">
-                      Perintah aktif di Bot Telegram (@{botStatus?.username || 'jalu_trade_bot'}):
-                    </p>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-[11px] font-mono mt-1">
-                      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 rounded flex flex-col gap-1.5">
-                        <span className="font-semibold text-slate-900 dark:text-white">📝 Jurnal &amp; Trade:</span>
-                        <code>/jurnal (Wizard interaktif)</code>
-                        <code>/quick XAUUSD BUY 0.1 +150 WIN</code>
-                        <code>/buy XAUUSD 0.05 +80</code>
-                        <code>/sell EURUSD 0.10 -40</code>
-                        <code>/running (Lihat posisi terbuka)</code>
-                        <code>/close 12 win 150 (Tutup trade)</code>
-                      </div>
-                      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 rounded flex flex-col gap-1.5">
-                        <span className="font-semibold text-emerald-600 dark:text-emerald-400">📊 Saldo &amp; Akun:</span>
-                        <code>/saldo (Cek balance &amp; equity)</code>
-                        <code>/today (Rekap hari ini)</code>
-                        <code>/lot 25 (Hitung ukuran lot)</code>
-                        <code>/deposit 500 | /wd 200</code>
-                        <code>/accounts | /switch {user?.username}</code>
-                        <code>/menu (Control panel bot)</code>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+              <div className="space-y-1.5">
+                <label className="text-xs font-mono font-semibold text-[#A3A3A3] block">
+                  Chat ID Telegram (Opsional)
+                </label>
+                <input
+                  type="text"
+                  value={telegramIdInput}
+                  onChange={(e) => setTelegramIdInput(e.target.value)}
+                  placeholder="12345678"
+                  className="w-full bg-[#121212] border border-[#2D2D2D] rounded-md px-3 py-2 text-xs font-mono text-white focus:border-sky-400 focus:outline-none"
+                />
               </div>
-           </div>
+            </div>
 
-           <div className="flex flex-col gap-4 border-t border-slate-100 dark:border-neutral-800 pt-8 mt-4">
-              <h3 className="text-xs font-bold uppercase tracking-widest text-slate-600 dark:text-neutral-400">Public Profile</h3>
+            <button
+              type="submit"
+              disabled={telegramSaving}
+              className="px-4 py-2 bg-[#262626] hover:bg-[#333333] text-white text-xs font-mono font-bold uppercase rounded transition-colors cursor-pointer flex items-center gap-1.5"
+            >
+              {telegramSaving ? 'Menyimpan...' : 'Simpan Koneksi Telegram'}
+              {telegramSuccess && <Check size={13} className="text-[#00E676]" />}
+            </button>
+          </form>
 
-              <div className="p-6 border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40 flex flex-col gap-3 rounded">
-                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
-                  Share this read-only link to let others view your trading performance and journal metrics.
-                </p>
-                <div className="flex items-center gap-2 mt-1">
-                  <input 
-                    type="text" 
-                    readOnly 
-                    value={`${window.location.origin}/p/${user?.username}`} 
-                    className="flex-1 text-xs px-3 py-2 border border-slate-300 dark:border-slate-700 rounded bg-white dark:bg-slate-900 font-mono text-slate-700 dark:text-slate-300 outline-none"
-                  />
-                  <button 
-                    onClick={() => {
-                      navigator.clipboard.writeText(`${window.location.origin}/p/${user?.username}`);
-                      setLinkCopied(true);
-                      setTimeout(() => setLinkCopied(false), 2000);
-                    }}
-                    className="px-4 py-2 bg-slate-900 hover:bg-slate-800 dark:bg-white dark:hover:bg-slate-100 text-white dark:text-slate-900 text-xs font-semibold uppercase tracking-wider rounded transition-colors shrink-0"
-                  >
-                    {linkCopied ? 'Copied!' : 'Copy Link'}
-                  </button>
-                </div>
-              </div>
-           </div>
+          {/* Quick command reference */}
+          <div className="bg-[#121212] border border-[#262626] rounded-lg p-3.5 text-xs font-mono space-y-2">
+            <span className="font-bold text-white block">Perintah Cepat Telegram Bot:</span>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-[#A3A3A3]">
+              <div><code>/quick XAUUSD BUY 0.10 +150 WIN</code></div>
+              <div><code>/saldo (Cek balance & equity)</code></div>
+              <div><code>/buy XAUUSD 0.05 +80</code></div>
+              <div><code>/today (Rekap statistik hari ini)</code></div>
+            </div>
+          </div>
+        </div>
 
-           <div className="flex flex-col gap-4 border-t border-slate-100 dark:border-neutral-800 pt-8 mt-4">
-              <h3 className="text-xs font-bold uppercase tracking-widest text-red-500">Danger Zone</h3>
+        {/* Section 4: Theme Toggle & Public Link */}
+        <div className="bg-[#1A1A1A] rounded-xl border border-[#2D2D2D] p-5 sm:p-6 space-y-4 shadow-xs">
+          <div className="flex items-center justify-between pb-3 border-b border-[#262626]">
+            <div>
+              <h2 className="text-sm font-bold uppercase tracking-wider text-white font-mono">
+                Theme & Public Share
+              </h2>
+              <p className="text-xs text-[#A3A3A3]">Preferensi visual interface dan profil publik</p>
+            </div>
 
-              {/* Reset Data Akun */}
-              <div className="p-6 border border-rose-200 dark:border-rose-900/60 bg-rose-50/70 dark:bg-rose-950/20 rounded-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div className="flex flex-col">
-                  <span className="font-bold uppercase tracking-widest text-sm text-rose-900 dark:text-rose-300 flex items-center gap-2">
-                    <Trash2 size={16} className="text-rose-600" />
-                    Reset Data Akun
-                  </span>
-                  <span className="text-xs text-rose-700 dark:text-rose-400 mt-0.5">
-                    Hapus seluruh riwayat trade log, deposit, dan withdrawal secara permanen untuk memulai lembaran bersih.
-                  </span>
-                  {resetSuccess && (
-                    <span className="text-xs text-emerald-600 dark:text-emerald-400 font-bold mt-2 flex items-center gap-1">
-                      <Check size={14} /> Seluruh data akun berhasil direset bersih!
-                    </span>
-                  )}
-                </div>
+            <button
+              onClick={toggleDarkMode}
+              className="px-3 py-1.5 rounded-md bg-[#121212] border border-[#2D2D2D] text-xs font-mono text-white hover:border-[#00E676] transition-colors flex items-center gap-2 cursor-pointer"
+            >
+              {darkMode ? <Sun size={14} className="text-amber-400" /> : <Moon size={14} className="text-sky-400" />}
+              <span>{darkMode ? 'Dark Mode (Default)' : 'Light Mode'}</span>
+            </button>
+          </div>
 
-                {confirmReset ? (
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      onClick={handleResetData}
-                      disabled={resetting}
-                      className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs uppercase tracking-widest rounded-sm shadow-sm transition-colors disabled:opacity-50"
-                    >
-                      {resetting ? 'Mereset...' : 'Ya, Hapus Semua'}
-                    </button>
-                    <button
-                      onClick={() => setConfirmReset(false)}
-                      className="px-3 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 dark:bg-neutral-800 dark:text-neutral-300 font-bold text-xs uppercase tracking-widest rounded-sm transition-colors"
-                    >
-                      Batal
-                    </button>
-                  </div>
-                ) : (
-                  <button 
-                    onClick={() => setConfirmReset(true)}
-                    className="px-5 py-2 border border-rose-600 text-rose-600 hover:bg-rose-600 hover:text-white font-bold text-xs uppercase tracking-widest transition-all rounded-sm shadow-xs shrink-0 cursor-pointer"
-                  >
-                    Reset Data
-                  </button>
-                )}
-              </div>
-              
-              <div className="p-6 border border-slate-200 dark:border-neutral-800 bg-slate-50 dark:bg-neutral-900/40 rounded-sm flex items-center justify-between">
-                <div className="flex flex-col">
-                  <span className="font-bold uppercase tracking-widest text-sm text-slate-800 dark:text-neutral-200">Logout Session</span>
-                  <span className="text-xs text-slate-500 dark:text-neutral-400">Clear your active session and return to the login screen.</span>
-                </div>
-                <button 
-                  onClick={onLogout}
-                  className="px-6 py-2 bg-black dark:bg-neutral-200 hover:bg-slate-800 dark:hover:bg-white text-white dark:text-neutral-900 font-bold text-xs uppercase tracking-widest transition-colors rounded-sm shadow-sm"
+          <div className="flex items-center gap-2 pt-1">
+            <input
+              type="text"
+              readOnly
+              value={`${window.location.origin}/p/${user?.username}`}
+              className="flex-1 text-xs px-3 py-2 border border-[#2D2D2D] rounded-md bg-[#121212] font-mono text-[#A3A3A3] outline-none"
+            />
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(`${window.location.origin}/p/${user?.username}`);
+                setLinkCopied(true);
+                setTimeout(() => setLinkCopied(false), 2000);
+              }}
+              className="px-4 py-2 bg-[#262626] hover:bg-[#333333] text-white text-xs font-mono font-bold uppercase rounded-md transition-colors shrink-0 flex items-center gap-1.5 cursor-pointer"
+            >
+              <Copy size={13} />
+              <span>{linkCopied ? 'Copied!' : 'Copy Public Link'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Section 5: Data Management / Reset */}
+        <div className="bg-[#1A1A1A] rounded-xl border border-[#FF3333]/30 p-5 sm:p-6 space-y-4 shadow-xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <h2 className="text-sm font-bold uppercase tracking-wider text-[#FF3333] font-mono flex items-center gap-2">
+                <Trash2 size={16} />
+                Reset Data Akun
+              </h2>
+              <p className="text-xs text-[#A3A3A3] mt-0.5">
+                Hapus seluruh riwayat trade log, deposit, dan withdrawal secara permanen untuk memulai lembaran bersih.
+              </p>
+              {resetSuccess && (
+                <span className="text-xs text-[#00E676] font-mono font-bold mt-2 flex items-center gap-1">
+                  <Check size={14} /> Seluruh data akun berhasil direset bersih!
+                </span>
+              )}
+            </div>
+
+            {confirmReset ? (
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={handleResetData}
+                  disabled={resetting}
+                  className="px-4 py-2 bg-[#FF3333] hover:bg-red-700 text-white font-mono font-bold text-xs uppercase rounded transition-colors disabled:opacity-50 cursor-pointer"
                 >
-                  Logout
+                  {resetting ? 'Mereset...' : 'Ya, Hapus Semua'}
+                </button>
+                <button
+                  onClick={() => setConfirmReset(false)}
+                  className="px-3 py-2 bg-[#262626] hover:bg-[#333333] text-[#A3A3A3] font-mono font-bold text-xs uppercase rounded transition-colors cursor-pointer"
+                >
+                  Batal
                 </button>
               </div>
-           </div>
+            ) : (
+              <button
+                onClick={() => setConfirmReset(true)}
+                className="px-4 py-2 border border-[#FF3333]/50 text-[#FF3333] hover:bg-[#FF3333]/15 font-mono font-bold text-xs uppercase rounded transition-colors shrink-0 cursor-pointer"
+              >
+                Reset Data
+              </button>
+            )}
+          </div>
         </div>
+
+        {/* Logout */}
+        <div className="pt-2 flex justify-end">
+          <button
+            onClick={onLogout}
+            className="px-5 py-2 bg-[#1A1A1A] border border-[#2D2D2D] hover:border-[#FF3333] text-[#A3A3A3] hover:text-[#FF3333] text-xs font-mono font-bold uppercase rounded-md transition-colors cursor-pointer"
+          >
+            Logout Session
+          </button>
+        </div>
+
       </div>
     </div>
   );

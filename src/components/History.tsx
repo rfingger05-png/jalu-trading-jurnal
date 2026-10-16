@@ -2,13 +2,13 @@ import React, { useState } from 'react';
 import { Trade } from '../types';
 import { cn } from '../lib/utils';
 import { format, isSameDay, isSameWeek, isSameMonth } from 'date-fns';
-import { Sparkles, CheckCircle2, Edit2, Upload, Trash2, Camera, Image as ImageIcon, Clock } from 'lucide-react';
+import { Sparkles, CheckCircle2, Edit2, Upload, Trash2, Camera, Image as ImageIcon, Clock, Images } from 'lucide-react';
 import { formatCurrency, formatImageUrl, authFetch, detectTradingSession } from '../utils';
 import EditTradeModal from './EditTradeModal';
 import ImportTradesModal from './ImportTradesModal';
 
 import { User } from '../types';
-export default function History({ trades, onTradeUpdated, user }: { trades: Trade[], onTradeUpdated: () => void, user?: User | null }) {
+export default function History({ trades, onTradeUpdated, user, onOpenGallery }: { trades: Trade[], onTradeUpdated: () => void, user?: User | null, onOpenGallery?: () => void }) {
   const [copyingDate, setCopyingDate] = useState<string | null>(null);
   const [editingTrade, setEditingTrade] = useState<Trade | null>(null);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
@@ -177,45 +177,70 @@ export default function History({ trades, onTradeUpdated, user }: { trades: Trad
 
   
   return (
-    <div className="flex-1 flex flex-col h-full min-h-0 bg-slate-50 dark:bg-neutral-950/50">
-      <div className="p-4 border-b border-slate-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shrink-0">
-        <h3 className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Trade History</h3>
+    <div className="flex-1 flex flex-col h-full min-h-0 bg-[#0D0D0D] text-white font-sans">
+      <div className="p-4 border-b border-[#2D2D2D] bg-[#141414] flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shrink-0">
+        <div>
+          <h3 className="text-xs font-bold uppercase tracking-wider text-white font-mono">Trade History</h3>
+          <p className="text-[11px] text-[#A3A3A3] mt-0.5">Chronological trade execution logs and data export</p>
+        </div>
         
         <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-          <div className="flex items-center bg-slate-100 dark:bg-neutral-900 rounded-sm p-1 border border-slate-200 dark:border-neutral-800">
-            <button onClick={() => setPeriodFilter('today')} className={cn("px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-sm transition-colors", periodFilter === 'today' ? "bg-white dark:bg-neutral-800 shadow-sm text-slate-800 dark:text-neutral-200" : "text-slate-500 hover:text-slate-700")}>Hari Ini</button>
-            <button onClick={() => setPeriodFilter('week')} className={cn("px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-sm transition-colors", periodFilter === 'week' ? "bg-white dark:bg-neutral-800 shadow-sm text-slate-800 dark:text-neutral-200" : "text-slate-500 hover:text-slate-700")}>Minggu Ini</button>
-            <button onClick={() => setPeriodFilter('month')} className={cn("px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-sm transition-colors", periodFilter === 'month' ? "bg-white dark:bg-neutral-800 shadow-sm text-slate-800 dark:text-neutral-200" : "text-slate-500 hover:text-slate-700")}>Bulan Ini</button>
-            <button onClick={() => setPeriodFilter('all')} className={cn("px-3 py-1 text-[10px] font-bold uppercase tracking-wider rounded-sm transition-colors", periodFilter === 'all' ? "bg-white dark:bg-neutral-800 shadow-sm text-slate-800 dark:text-neutral-200" : "text-slate-500 hover:text-slate-700")}>All Time</button>
+          <div className="flex items-center bg-[#1A1A1A] rounded-md p-0.5 border border-[#2D2D2D] font-mono text-[11px]">
+            <button onClick={() => setPeriodFilter('today')} className={cn("px-2.5 py-1 rounded transition-colors cursor-pointer", periodFilter === 'today' ? "bg-[#2D2D2D] text-white font-bold" : "text-[#A3A3A3] hover:text-white")}>Hari Ini</button>
+            <button onClick={() => setPeriodFilter('week')} className={cn("px-2.5 py-1 rounded transition-colors cursor-pointer", periodFilter === 'week' ? "bg-[#2D2D2D] text-white font-bold" : "text-[#A3A3A3] hover:text-white")}>Minggu Ini</button>
+            <button onClick={() => setPeriodFilter('month')} className={cn("px-2.5 py-1 rounded transition-colors cursor-pointer", periodFilter === 'month' ? "bg-[#2D2D2D] text-white font-bold" : "text-[#A3A3A3] hover:text-white")}>Bulan Ini</button>
+            <button onClick={() => setPeriodFilter('all')} className={cn("px-2.5 py-1 rounded transition-colors cursor-pointer", periodFilter === 'all' ? "bg-[#2D2D2D] text-white font-bold" : "text-[#A3A3A3] hover:text-white")}>All Time</button>
           </div>
+
+          {/* Prominent Export CSV Button */}
+          <button 
+            onClick={handleExportCSV}
+            className="text-[11px] font-mono flex items-center gap-1.5 font-bold border border-[#00E676]/40 px-3 py-1.5 hover:bg-[#00E676]/20 transition-colors uppercase rounded-md text-[#00E676] bg-[#00E676]/10 cursor-pointer"
+            title="Download full trade history as CSV"
+          >
+            <Upload size={12} className="rotate-180" />
+            Export CSV
+          </button>
+
           <button 
             onClick={() => setShowImport(true)}
-            className="text-[10px] flex items-center gap-1 font-bold border border-slate-300 dark:border-neutral-700 px-3 py-1.5 hover:bg-slate-100 dark:bg-neutral-950 transition-colors uppercase rounded-sm text-slate-600 dark:text-neutral-400 bg-white dark:bg-neutral-900 ml-auto sm:ml-0"
+            className="text-[11px] font-mono flex items-center gap-1.5 font-semibold border border-[#2D2D2D] px-3 py-1.5 hover:bg-[#262626] transition-colors uppercase rounded-md text-[#A3A3A3] hover:text-white bg-[#1A1A1A] cursor-pointer"
           >
             <Upload size={12} />
             Import CSV
           </button>
+
+          {onOpenGallery && (
+            <button 
+              onClick={onOpenGallery}
+              className="text-[11px] font-mono flex items-center gap-1.5 font-semibold border border-[#2D2D2D] px-3 py-1.5 hover:bg-[#262626] text-[#A3A3A3] hover:text-white transition-colors uppercase rounded-md bg-[#1A1A1A] cursor-pointer"
+              title="Buka Koleksi Screenshot Chart di Galeri"
+            >
+              <Images size={12} />
+              <span>Galeri</span>
+            </button>
+          )}
         </div>
       </div>
 
       <div className="flex-1 overflow-auto p-4 md:p-8">
         {Object.keys(tradesByDate).length === 0 ? (
-          <div className="flex flex-col items-center justify-center p-12 border border-slate-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 shadow-sm mt-8">
-            <span className="text-slate-400 text-[10px] uppercase font-bold tracking-widest">No trades recorded yet. Start journaling!</span>
+          <div className="flex flex-col items-center justify-center p-12 border border-[#2D2D2D] rounded-xl bg-[#1A1A1A] mt-8">
+            <span className="text-[#A3A3A3] text-xs font-mono">Belum ada transaksi tercatat. Mulai jurnal atau gunakan Telegram Bot.</span>
           </div>
         ) : (
-          <div className="flex flex-col gap-8 max-w-5xl mx-auto w-full">
+          <div className="flex flex-col gap-6 max-w-6xl mx-auto w-full">
             {(Object.entries(tradesByDate) as [string, Trade[]][]).sort(([a], [b]) => b.localeCompare(a)).map(([dateStr, groupTrades]) => (
-              <div key={dateStr} className="bg-white dark:bg-neutral-900 border border-slate-200 dark:border-neutral-800 shadow-sm flex flex-col">
-                <div className="p-4 border-b border-slate-100 dark:border-neutral-800 flex justify-between items-center bg-slate-50 dark:bg-neutral-950/50">
-                  <h3 className="text-sm font-bold tracking-tight text-slate-800 dark:text-neutral-300">
-                    {format(parseDateStr(groupTrades[0].created_at), 'EEEE, MMMM do, yyyy')}
-                    <span className="ml-2 text-xs font-normal text-slate-500">({groupTrades.length} trades)</span>
+              <div key={dateStr} className="bg-[#1A1A1A] border border-[#2D2D2D] rounded-xl flex flex-col overflow-hidden shadow-xs">
+                <div className="p-4 border-b border-[#2D2D2D] flex justify-between items-center bg-[#141414]">
+                  <h3 className="text-sm font-bold tracking-tight text-white font-mono">
+                    {format(parseDateStr(groupTrades[0].created_at), 'EEEE, dd MMMM yyyy')}
+                    <span className="ml-2 text-xs font-normal text-[#A3A3A3]">({groupTrades.length} trades)</span>
                   </h3>
                   <div className="flex items-center gap-2">
                     {confirmDeleteDate === dateStr ? (
                       <div className="flex items-center gap-1">
-                        <button onClick={() => setConfirmDeleteDate(null)} className="text-[10px] font-bold border border-slate-300 dark:border-neutral-700 px-3 py-1.5 hover:bg-slate-100 dark:bg-neutral-900 transition-all uppercase rounded-sm bg-white dark:bg-neutral-950 text-slate-500">Cancel</button>
+                        <button onClick={() => setConfirmDeleteDate(null)} className="text-[10px] font-bold border border-[#333333] px-3 py-1.5 hover:bg-[#262626] transition-all uppercase rounded-md bg-[#121212] text-[#A3A3A3]">Cancel</button>
                         <button onClick={async () => {
                           try {
                             await authFetch(`/api/trades/date/${dateStr}`, { method: 'DELETE' });
@@ -224,28 +249,22 @@ export default function History({ trades, onTradeUpdated, user }: { trades: Trad
                           } catch (e) {
                             console.error(e);
                           }
-                        }} className="text-[10px] font-bold border border-red-600 px-3 py-1.5 hover:bg-red-700 transition-all uppercase rounded-sm bg-red-600 text-white">Confirm</button>
+                        }} className="text-[10px] font-bold border border-[#FF3333] px-3 py-1.5 hover:bg-red-700 transition-all uppercase rounded-md bg-[#FF3333] text-white">Confirm</button>
                       </div>
                     ) : (
                       <button 
                         onClick={() => setConfirmDeleteDate(dateStr)}
-                        className="text-[10px] font-bold border border-red-200 dark:border-red-900/50 px-2.5 py-1.5 hover:bg-red-50 dark:hover:bg-red-900/20 text-red-500 transition-all uppercase flex items-center gap-1.5 rounded-sm bg-white dark:bg-neutral-900"
+                        className="text-[10px] font-bold border border-[#FF3333]/30 px-2.5 py-1.5 hover:bg-[#FF3333]/15 text-[#FF3333] transition-all uppercase flex items-center gap-1.5 rounded-md bg-[#121212] cursor-pointer"
                         title="Delete all trades for this date"
                       >
                         <Trash2 size={12} /> Delete Day
                       </button>
                     )}
-                    <button 
-                      onClick={() => formatGroupForGemini(dateStr, groupTrades)}
-                      className="text-[10px] font-bold border border-black dark:border-neutral-500 px-3 py-1.5 hover:bg-black dark:bg-neutral-200 hover:text-white dark:text-neutral-900 transition-all uppercase flex items-center gap-2 rounded-sm bg-white dark:bg-neutral-900"
-                    >
-                      {copyingDate === dateStr ? <><CheckCircle2 size={12} /> Copied for Gemini</> : <><Sparkles size={12} /> Ask Gemini</>}
-                    </button>
                   </div>
                 </div>
                 <div className="overflow-x-auto min-h-0">
                   <table className="w-full min-w-[800px] text-left">
-                    <thead className="bg-slate-100 dark:bg-neutral-950/50 text-[10px] uppercase font-bold text-slate-500 dark:text-neutral-500 tracking-wider">
+                    <thead className="bg-[#121212] text-[10px] uppercase font-bold text-[#A3A3A3] tracking-wider border-b border-[#2D2D2D]">
                       <tr>
                         <th className="px-4 py-3 w-32">Time</th>
                         <th className="px-4 py-3">Pair / Dir</th>

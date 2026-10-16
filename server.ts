@@ -14,7 +14,17 @@ const JWT_SECRET = process.env.JWT_SECRET || 'trading_journal_super_secret_key_1
 
 const app = express();
 
-const PORT = 3000;
+const portArgIndex = process.argv.indexOf("--port");
+const argPort = portArgIndex !== -1 && process.argv[portArgIndex + 1] ? Number(process.argv[portArgIndex + 1]) : null;
+const PORT = Number(process.env.PORT) || argPort || 3000;
+
+process.on('uncaughtException', (err) => {
+  console.error('Process Uncaught Exception:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('Process Unhandled Rejection:', reason);
+});
+
 app.get("/api/health", (req, res) => res.json({ status: "ok" }));
 app.get('/ping', (req, res) => res.status(200).send('OK'));
 
@@ -1136,7 +1146,7 @@ async function setupVite() {
     const viteMod = "vite";
     const { createServer: createViteServer } = await import(/* @vite-ignore */ viteMod);
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: { middlewareMode: true, hmr: false },
       appType: "spa",
     });
     app.use(vite.middlewares);
@@ -1148,7 +1158,7 @@ async function setupVite() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
     
     // Telegram Keep-Alive / Anti-Cold Start
@@ -1157,6 +1167,14 @@ async function setupVite() {
         fetch(`http://localhost:${PORT}/api/health`).catch(() => {});
       } catch (e) {}
     }, 4 * 60 * 1000); // ping every 4 mins
+  });
+
+  server.on("error", (err: any) => {
+    if (err.code === "EADDRINUSE") {
+      console.warn(`Port ${PORT} in use, handling gracefully.`);
+    } else {
+      console.error("Server error:", err);
+    }
   });
 }
 
