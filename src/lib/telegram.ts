@@ -279,6 +279,166 @@ interface JournalSession {
 }
 const journalSessions = new Map<string, JournalSession>();
 const pendingPhotos = new Map<string, { image: string; timestamp: number }>();
+const recentBulkBatches = new Map<string, { tradeIds: number[]; userId: number; timestamp: number }>();
+
+// Visual progress bar generator for goal tracking in Telegram messages
+export function renderProgressBar(pct: number, length: number = 10): string {
+  const clamped = Math.max(0, Math.min(100, pct));
+  const filled = Math.round((clamped / 100) * length);
+  const empty = length - filled;
+  return '▰'.repeat(filled) + '▱'.repeat(empty);
+}
+
+// Bulk trade line parser
+export interface ParsedTradeLine {
+  pair: string;
+  direction: 'BUY' | 'SELL';
+  lot: number;
+  entry: number;
+  sl: number;
+  tp: number;
+  pnl: number;
+  result: 'WIN' | 'LOSS' | 'BE' | 'Pending';
+  notes: string;
+}
+
+export function parseBulkTradeLine(line: string): ParsedTradeLine | null {
+  const cleanLine = line.trim();
+  if (!cleanLine || cleanLine.startsWith('#') || cleanLine.startsWith('//')) return null;
+
+  // Normalize delimiters: comma, semicolon, or whitespace
+  const isCsv = cleanLine.includes(',');
+  const tokens = isCsv 
+    ? cleanLine.split(',').map(s => s.trim()).filter(Boolean)
+    : cleanLine.split(/\s+/).map(s => s.trim()).filter(Boolean);
+
+  if (tokens.length === 0) return null;
+
+  let pair = 'XAUUSD';
+  let direction: 'BUY' | 'SELL' = 'BUY';
+  let lot = 0.01;
+  let entry = 0;
+  let sl = 0;
+  let tp = 0;
+  let pnl = 0;
+  let result: 'WIN' | 'LOSS' | 'BE' | 'Pending' = 'WIN';
+  let explicitResult = false;
+  let explicitLot = false;
+  const notesArr: string[] = [];
+
+  for (let i = 0; i < tokens.length; i++) {
+    const raw = tokens[i];
+    const upper = raw.toUpperCase();
+
+    // Direction
+    if (upper === 'BUY' || upper === 'LONG' || upper === 'B') {
+      direction = 'BUY';
+      continue;
+    }
+    if (upper === 'SELL' || upper === 'SHORT' || upper === 'S') {
+      direction = 'SELL';
+      continue;
+    }
+
+    // Result
+    if (upper === 'WIN' || upper === 'PROFIT' || upper === 'W') {
+      result = 'WIN';
+      explicitResult = true;
+      continue;
+    }
+    if (upper === 'LOSS' || upper === 'LOSE' || upper === 'RUGI' || upper === 'MC' || upper === 'L') {
+      result = 'LOSS';
+      explicitResult = true;
+      continue;
+    }
+    if (upper === 'BE' || upper === 'BREAKEVEN') {
+      result = 'BE';
+      pnl = 0;
+      explicitResult = true;
+      continue;
+    }
+    if (upper === 'RUNNING' || upper === 'OPEN' || upper === 'PENDING') {
+      result = 'Pending';
+      pnl = 0;
+      explicitResult = true;
+      continue;
+    }
+
+    // SL / TP / Entry keywords
+    if (raw.toLowerCase().startsWith('sl=')) {
+      sl = parseFloat(raw.slice(3)) || 0;
+      continue;
+    }
+    if (raw.toLowerCase().startsWith('tp=')) {
+      tp = parseFloat(raw.slice(3)) || 0;
+      continue;
+    }
+    if (raw.toLowerCase().startsWith('entry=')) {
+      entry = parseFloat(raw.slice(6)) || 0;
+      continue;
+    }
+
+    // Explicit PnL with sign (+150, -45)
+    if (/^[+-]\d+(\.\d+)?$/.test(raw)) {
+      pnl = parseFloat(raw);
+      if (!explicitResult) {
+        result = pnl >= 0 ? 'WIN' : 'LOSS';
+      }
+      continue;
+    }
+
+    // Currency / Asset Pairs
+    if (/^[A-Z]{6}$/.test(upper) || upper === 'GOLD' || upper === 'BTC' || upper === 'ETH' || upper === 'US30' || upper === 'NAS100') {
+      pair = upper === 'GOLD' ? 'XAUUSD' : (upper === 'BTC' ? 'BTCUSD' : upper);
+      continue;
+    }
+
+    // Numbers (Lot / PnL / Entry)
+    const num = parseFloat(raw.replace('$', '').replace('¢', ''));
+    if (!isNaN(num)) {
+      // Lot size detection (e.g. 0.01, 0.05, 0.10, 0.5, 1.0, 2.0)
+      if (!explicitLot && num > 0 && num <= 50 && (raw.includes('.') || num <= 1)) {
+        lot = num;
+        explicitLot = true;
+        continue;
+      }
+      // Gold price level detection (e.g. 2650.50)
+      if (entry === 0 && num > 1000) {
+        entry = num;
+        continue;
+      }
+      // PNL detection if not set
+      if (pnl === 0) {
+        pnl = num;
+        if (!explicitResult) {
+          result = pnl >= 0 ? 'WIN' : 'LOSS';
+        }
+        continue;
+      }
+    }
+
+    // Any other string token is part of setup / notes
+    notesArr.push(raw);
+  }
+
+  // Ensure PNL sign aligns with LOSS/WIN
+  if (result === 'LOSS' && pnl > 0) pnl = -pnl;
+  if (result === 'WIN' && pnl < 0) pnl = Math.abs(pnl);
+
+  const notes = notesArr.length > 0 ? notesArr.join(' ') : 'Bulk Quick Trade';
+
+  return {
+    pair,
+    direction,
+    lot,
+    entry,
+    sl,
+    tp,
+    pnl,
+    result,
+    notes
+  };
+}
 
 export async function getTelegramImageBase64(fileLinkUrl: string): Promise<string> {
   try {
@@ -305,6 +465,11 @@ const cleanupInterval = setInterval(() => {
   for (const [id, photo] of pendingPhotos.entries()) {
     if (now - photo.timestamp > 15 * 60 * 1000) {
       pendingPhotos.delete(id);
+    }
+  }
+  for (const [id, batch] of recentBulkBatches.entries()) {
+    if (now - batch.timestamp > 30 * 60 * 1000) {
+      recentBulkBatches.delete(id);
     }
   }
 }, 60 * 1000);
@@ -345,26 +510,28 @@ export function initTelegramBot(db: any) {
     // Register clean, organized command list to Telegram's built-in command menu
     bot.telegram.setMyCommands([
       { command: 'menu', description: '📱 Buka Control Panel navigasi interaktif' },
-      { command: 'help', description: '💡 Panduan lengkap & daftar semua perintah' },
-      { command: 'jurnal', description: '📝 Wizard catat trade langkah demi langkah' },
-      { command: 'quick', description: '⚡ Catat trade 1 baris: /quick [pair] [buy/sell] [lot] [pnl]' },
+      { command: 'today', description: '📊 Rekap performa & progres target hari ini' },
+      { command: 'quick', description: '⚡ Catat 1 trade cepat: /quick [pair] [buy/sell] [lot] [pnl]' },
+      { command: 'bulk', description: '🚀 Catat banyak trade sekaligus dalam 1 pesan' },
       { command: 'buy', description: '🟢 Shortcut catat posisi BUY instan: /buy [pair] [lot] [pnl]' },
       { command: 'sell', description: '🔴 Shortcut catat posisi SELL instan: /sell [pair] [lot] [pnl]' },
+      { command: 'jurnal', description: '📝 Wizard catat trade langkah demi langkah' },
+      { command: 'saldo', description: '💰 Cek saldo modal, equity & status drawdown' },
+      { command: 'setgoal', description: '🎯 Atur target profit / equity akun: /setgoal [jumlah]' },
+      { command: 'weekly', description: '📈 Rekap evaluasi performa 7 hari terakhir' },
+      { command: 'lot', description: '🧮 Hitung lot otomatis sesuai toleransi risiko' },
+      { command: 'setrisk', description: '🛡️ Atur toleransi risiko per trade: /setrisk [%]' },
       { command: 'running', description: '⏳ Daftar trade terbuka / pending order' },
       { command: 'close', description: '✅ Tutup trade running: /close [id] [win/loss] [pnl]' },
       { command: 'undo', description: '↩️ Batalkan/hapus trade terakhir' },
-      { command: 'saldo', description: '💰 Cek saldo modal, equity & status drawdown' },
-      { command: 'today', description: '📊 Rekap performa trade hari ini' },
-      { command: 'weekly', description: '📈 Rekap performa 7 hari terakhir' },
       { command: 'setmodal', description: '💵 Setel modal awal akun: /setmodal [jumlah]' },
       { command: 'deposit', description: '📥 Catat deposit saldo: /deposit [jumlah]' },
       { command: 'wd', description: '📤 Catat penarikan profit: /wd [jumlah]' },
-      { command: 'lot', description: '🧮 Hitung lot otomatis sesuai toleransi risiko' },
-      { command: 'setrisk', description: '🛡️ Atur toleransi risiko per trade: /setrisk [%]' },
-      { command: 'setaccount', description: '🏷️ Pilih tipe akun: Standard ($), Cent (¢), atau Nano (¢)' },
       { command: 'news', description: '📰 Kalender ekonomi Forex & rilis berita' },
+      { command: 'setaccount', description: '🏷️ Pilih tipe akun: Standard ($), Cent (¢), atau Nano (¢)' },
       { command: 'accounts', description: '👥 Kelola akun multi-user & ganti akun' },
-      { command: 'reset', description: '⚠️ Reset total data akun (trade log & saldo)' }
+      { command: 'reset', description: '⚠️ Reset total data akun (trade log & saldo)' },
+      { command: 'help', description: '💡 Panduan lengkap & daftar semua perintah' }
     ]).catch((cmdErr: any) => {
       console.warn('⚠️ Could not set Telegram commands:', cmdErr?.message || cmdErr);
     });
@@ -1273,6 +1440,254 @@ export function initTelegramBot(db: any) {
   bot.command('buy', (ctx) => handleQuickTrade(ctx, 'BUY'));
   bot.command('sell', (ctx) => handleQuickTrade(ctx, 'SELL'));
 
+  // BULK TRADE JOURNALING COMMANDS: /bulk, /batch, /jurnalbulk, /multitrade
+  const handleBulkTrades = async (ctx: any) => {
+    try {
+      const telegramId = ctx.from?.id?.toString();
+      const user = await getActiveUser(telegramId, ctx.from?.username);
+      if (!user) return sendUnlinkedPrompt(ctx);
+
+      const rawText = (ctx.message?.text || '').trim();
+      const rawLines = rawText
+        .split('\n')
+        .map((l: string) => l.trim())
+        .filter((l: string) => l.length > 0);
+
+      // Clean lines: strip command if on first line
+      const lines: string[] = [];
+      for (let i = 0; i < rawLines.length; i++) {
+        const line = rawLines[i];
+        if (i === 0 && line.startsWith('/')) {
+          const stripped = line.replace(/^\/\w+(@\w+)?\s*/i, '').trim();
+          if (stripped.length > 0) {
+            lines.push(stripped);
+          }
+        } else {
+          lines.push(line);
+        }
+      }
+
+      // If no trade lines provided, send interactive guide & instant copy-paste templates
+      if (lines.length === 0) {
+        const isNano = user.currency === 'NANO';
+        const isCent = user.currency === 'USC' || isNano;
+        const sym = isCent ? '¢' : (user.currency === 'IDR' ? 'Rp ' : '$');
+
+        const guideMsg =
+          `🚀 <b>JURNAL TRADE BULK CEPAT (/bulk)</b>\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `Catat banyak posisi trade sekaligus dalam 1 pesan! Sangat praktis untuk evaluasi akhir sesi atau setelah scalping bertubi-tubi.\n\n` +
+          `📋 <b>Format Fleksibel per Baris:</b>\n` +
+          `<code>[PAIR] [BUY/SELL] [LOT] [P/L] [WIN/LOSS (Opsional)] [SETUP (Opsional)]</code>\n\n` +
+          `💡 <i>Kelebihan Input Pintar:</i>\n` +
+          `• Jika pair tidak ditulis, otomatis dianggap <b>XAUUSD</b>.\n` +
+          `• Tanda <code>+</code> atau <code>-</code> otomatis mendeteksi WIN atau LOSS.\n` +
+          `• Pips otomatis dihitung akurat sesuai lot & modal akun Anda.\n` +
+          `• Mendukung pemisah spasi maupun koma (CSV).\n\n` +
+          `📌 <b>Contoh 1 (XAUUSD Lengkap):</b>\n` +
+          `<code>/bulk\n` +
+          `XAUUSD BUY 0.05 +120 WIN Retest H1\n` +
+          `XAUUSD BUY 0.05 +85 WIN Partial TP2\n` +
+          `XAUUSD SELL 0.10 -45 LOSS False Breakout\n` +
+          `EURUSD BUY 0.02 +25 WIN Scalp Asia</code>\n\n` +
+          `📌 <b>Contoh 2 (Shortcut Cepat XAUUSD):</b>\n` +
+          `<code>/bulk\n` +
+          `BUY 0.05 +150\n` +
+          `BUY 0.05 +80\n` +
+          `SELL 0.10 -40</code>\n\n` +
+          `📌 <b>Contoh 3 (Format Koma / CSV):</b>\n` +
+          `<code>/bulk\n` +
+          `XAUUSD, BUY, 0.05, 120, WIN\n` +
+          `XAUUSD, SELL, 0.10, -50, LOSS</code>\n\n` +
+          `👇 <i>Copy salah satu template di atas, sesuaikan angka trade Anda, lalu kirim ke bot!</i>`;
+
+        const btns = [
+          [Markup.button.callback('⚡ Catat 1 Trade (/quick)', 'cmd_start_journal'), Markup.button.callback('💰 Cek Saldo', 'cmd_saldo')],
+          [Markup.button.callback('📱 Menu Utama', 'cmd_menu')]
+        ];
+        return sendOrEdit(ctx, guideMsg, false, btns);
+      }
+
+      // Parse every trade line
+      const parsedTrades: ParsedTradeLine[] = [];
+      const failedLines: string[] = [];
+
+      for (const line of lines) {
+        const item = parseBulkTradeLine(line);
+        if (item) {
+          parsedTrades.push(item);
+        } else {
+          failedLines.push(line);
+        }
+      }
+
+      if (parsedTrades.length === 0) {
+        return ctx.reply(
+          `❌ <b>Format Trade Tidak Terbaca</b>\n` +
+          `Pastikan setiap baris berisi arah posisi (BUY/SELL), lot, dan nominal P/L.\n\n` +
+          `Contoh:\n<code>/bulk\nBUY 0.05 +120\nSELL 0.05 -40</code>`,
+          { parse_mode: 'HTML' }
+        );
+      }
+
+      // Insert all trades into DB
+      const mode = user.current_mode || 'live';
+      const isNano = user.currency === 'NANO';
+      const isCent = user.currency === 'USC' || isNano;
+      const sym = isCent ? '¢' : (user.currency === 'IDR' ? 'Rp ' : '$');
+      const sess = getWibTimeAndSession();
+
+      const createdIds: number[] = [];
+      let batchPL = 0;
+      let batchWins = 0;
+      let batchLosses = 0;
+      let batchBEs = 0;
+      let batchPips = 0;
+
+      for (const t of parsedTrades) {
+        const isWin = t.result === 'WIN';
+        const pips = calculatePips(t.pair, t.entry, t.tp, t.pnl, t.lot, isWin, isNano);
+        
+        batchPL += t.pnl;
+        if (t.result === 'WIN') batchWins++;
+        else if (t.result === 'LOSS') batchLosses++;
+        else batchBEs++;
+        batchPips += pips;
+
+        const ins = await db.execute({
+          sql: `INSERT INTO trades (
+            user_id, pair, direction, setup_name, entry_price, sl, tp,
+            account_balance, position_size, result, realized_pl, pips,
+            anxiety_level, notes, image, image_url, has_image, run_mode,
+            session, trade_time, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+          args: [
+            user.id, t.pair, t.direction, t.notes, t.entry, t.sl, t.tp,
+            0, t.lot, t.result, t.pnl, pips,
+            2, t.notes, null, null, 0, mode,
+            sess.sessionName, sess.timeStr
+          ]
+        });
+
+        if (ins.lastInsertRowid) {
+          createdIds.push(Number(ins.lastInsertRowid));
+        }
+      }
+
+      // Store in memory for instant 1-click Undo rollback
+      const batchKey = `${user.id}_${Date.now()}`;
+      recentBulkBatches.set(batchKey, {
+        tradeIds: createdIds,
+        userId: user.id,
+        timestamp: Date.now()
+      });
+
+      // Recalculate stats & Goal progress
+      const s = await getUserEquityData(user.id, user);
+      const targetGoal = user.target_balance ? Number(user.target_balance) : (s.initialBal > 0 ? Math.round(s.initialBal * 1.2) : 10800);
+      const goalPct = targetGoal > 0 ? Math.min(100, Math.max(0, (s.currentEquity / targetGoal) * 100)) : 0;
+      const pBar = renderProgressBar(goalPct, 10);
+      const remainingGoal = Math.max(0, targetGoal - s.currentEquity);
+
+      const batchWinRate = parsedTrades.length > 0 ? ((batchWins / parsedTrades.length) * 100).toFixed(1) : '0.0';
+      const batchSignPL = batchPL >= 0 ? '+' : '';
+
+      // Build itemized list (show up to 8 items nicely)
+      let listText = '';
+      const displayTrades = parsedTrades.slice(0, 8);
+      displayTrades.forEach((t, idx) => {
+        const dirIcon = t.direction === 'BUY' ? '🟢' : '🔴';
+        const sign = t.pnl >= 0 ? '+' : '';
+        const tradePips = calculatePips(t.pair, t.entry, t.tp, t.pnl, t.lot, t.result === 'WIN', isNano);
+        const pipsSign = tradePips >= 0 ? '+' : '';
+        listText += `${idx + 1}. ${dirIcon} <b>${t.pair}</b> ${t.direction} | ${t.lot} Lot | <b>${sign}${sym}${t.pnl.toFixed(2)}</b> (${pipsSign}${tradePips}p) | <i>${t.result}</i>\n`;
+      });
+      if (parsedTrades.length > 8) {
+        listText += `   <i>... dan ${parsedTrades.length - 8} trade lainnya</i>\n`;
+      }
+
+      let msg =
+        `🚀 <b>[${parsedTrades.length} TRADE BULK BERHASIL DICATAT]</b>\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `👤 <b>Akun:</b> <code>${user.username}</code> (${mode})\n` +
+        `🕒 <b>Waktu:</b> <b>${sess.timeStr} WIB</b> (${sess.sessionDisplay})\n\n` +
+        `📋 <b>Daftar Eksekusi:</b>\n` +
+        `${listText}` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `📊 <b>Ringkasan Batch Ini:</b>\n` +
+        `• Net Batch P/L: <b>${batchSignPL}${sym}${batchPL.toLocaleString('en-US', { minimumFractionDigits: 2 })}</b>\n` +
+        `• Win Rate: <b>${batchWinRate}%</b> (${batchWins}W · ${batchLosses}L${batchBEs > 0 ? ` · ${batchBEs}BE` : ''})\n` +
+        `• Akumulasi Pips: <b>${batchPips >= 0 ? '+' : ''}${batchPips} Pips</b>\n` +
+        `────────────────────────────\n` +
+        `⚡ <b>Equity Terkini:</b> <b>${sym}${s.currentEquity.toLocaleString('en-US', { minimumFractionDigits: 2 })}</b>\n` +
+        `🎯 <b>Progress to Goal:</b> <b>${pBar} ${goalPct.toFixed(1)}%</b>\n` +
+        `   <i>${s.currentEquity >= targetGoal ? '🏆 TARGET TERCAPAI!' : `Sisa ${sym}${remainingGoal.toLocaleString('en-US', { minimumFractionDigits: 2 })} menuju target ${sym}${targetGoal.toLocaleString('en-US', { minimumFractionDigits: 2 })}`}</i>`;
+
+      if (failedLines.length > 0) {
+        msg += `\n\n⚠️ <i>${failedLines.length} baris diabaikan karena format tidak sesuai.</i>`;
+      }
+
+      const buttons = [
+        [Markup.button.callback('📊 Cek /today', 'cmd_today'), Markup.button.callback('💰 Cek Saldo', 'cmd_saldo')],
+        [Markup.button.callback('↩️ Batalkan Batch Ini', `undo_batch_${batchKey}`)],
+        [Markup.button.callback('📱 Menu Utama', 'cmd_menu')]
+      ];
+
+      await ctx.reply(msg, {
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: buttons }
+      });
+    } catch (e) {
+      console.error("handleBulkTrades error:", e);
+      await ctx.reply('❌ Terjadi kesalahan saat memproses trade bulk.');
+    }
+  };
+
+  bot.command(['bulk', 'batch', 'jurnalbulk', 'multitrade', 'massal'], handleBulkTrades);
+  bot.action('cmd_bulk_prompt', handleBulkTrades);
+
+  // Undo entire bulk batch action
+  bot.action(/^undo_batch_(.+)$/, async (ctx: any) => {
+    try {
+      const batchKey = ctx.match[1];
+      const batch = recentBulkBatches.get(batchKey);
+      if (!batch || batch.tradeIds.length === 0) {
+        return ctx.reply('⚠️ Data batch tidak ditemukan atau sudah dibatalkan sebelumnya.');
+      }
+
+      const telegramId = ctx.from?.id?.toString();
+      const user = await getActiveUser(telegramId, ctx.from?.username);
+      if (!user || user.id !== batch.userId) {
+        return ctx.reply('❌ Akses ditolak.');
+      }
+
+      for (const id of batch.tradeIds) {
+        await db.execute({ sql: "DELETE FROM trades WHERE id = ?", args: [id] });
+      }
+      recentBulkBatches.delete(batchKey);
+
+      const s = await getUserEquityData(user.id, user);
+      const isCent = user.currency === 'USC' || user.currency === 'NANO';
+      const sym = isCent ? '¢' : (user.currency === 'IDR' ? 'Rp ' : '$');
+
+      const undoMsg =
+        `↩️ <b>BATCH TRADE BERHASIL DIBATALKAN!</b>\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `Sebanyak <b>${batch.tradeIds.length} trade</b> telah dihapus dari log akun <code>${user.username}</code>.\n` +
+        `⚡ Equity dipulihkan ke: <b>${sym}${s.currentEquity.toFixed(2)}</b>`;
+
+      const btns = [
+        [Markup.button.callback('💰 Cek Saldo', 'cmd_saldo'), Markup.button.callback('📊 Hari Ini', 'cmd_today')],
+        [Markup.button.callback('📱 Menu Utama', 'cmd_menu')]
+      ];
+
+      await sendOrEdit(ctx, undoMsg, false, btns);
+    } catch (e) {
+      console.error("undo batch error:", e);
+      await ctx.reply('❌ Gagal membatalkan batch trade.');
+    }
+  });
+
   // RUNNING / PENDING ORDERS COMMANDS: /running, /open, /close
   const handleRunningTrades = async (ctx: any) => {
     try {
@@ -1480,12 +1895,18 @@ export function initTelegramBot(db: any) {
 
       if (timeframe === 'today') {
         label = "HARI INI";
-        const todayStr = now.toISOString().split('T')[0];
+        const nowWib = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Jakarta" }));
+        const todayWibStr = nowWib.toISOString().split('T')[0];
+        const todayUtcStr = now.toISOString().split('T')[0];
+
         filteredTrades = allTrades.filter((t: any) => {
           let d = t.created_at || '';
           if (!d.includes('Z')) d += 'Z';
           try {
-            return new Date(d).toISOString().split('T')[0] === todayStr;
+            const dt = new Date(d);
+            const dtWibStr = new Date(dt.toLocaleString("en-US", { timeZone: "Asia/Jakarta" })).toISOString().split('T')[0];
+            const dtUtcStr = dt.toISOString().split('T')[0];
+            return dtWibStr === todayWibStr || dtUtcStr === todayUtcStr;
           } catch(e) { return false; }
         });
       } else if (timeframe === 'weekly') {
@@ -1517,36 +1938,69 @@ export function initTelegramBot(db: any) {
       let losses = 0;
       let grossProfit = 0;
       let grossLoss = 0;
+      let totalPeriodPips = 0;
+      const isNano = user?.currency === 'NANO';
+      const isCent = user?.currency === 'USC' || isNano;
+      const sym = isCent ? '¢' : (user?.currency === 'IDR' ? 'Rp ' : '$');
 
       filteredTrades.forEach((t: any) => {
         const pl = t.realized_pl || 0;
         totalPL += pl;
-        if ((t.result || '').toUpperCase() === 'WIN') {
+        const isWin = (t.result || '').toUpperCase() === 'WIN';
+        if (isWin) {
           wins++;
           grossProfit += Math.max(0, pl);
         } else if ((t.result || '').toUpperCase() === 'LOSS') {
           losses++;
           grossLoss += Math.abs(Math.min(0, pl));
         }
+
+        const pips = (t.pips !== null && t.pips !== undefined && !isNaN(Number(t.pips)))
+          ? Number(t.pips)
+          : calculatePips(t.pair || 'XAUUSD', t.entry_price || 0, t.tp || 0, pl, t.position_size || 0.1, isWin, isNano);
+        totalPeriodPips += pips;
       });
 
       const winRate = filteredTrades.length > 0 ? ((wins / filteredTrades.length) * 100).toFixed(1) : '0.0';
       const profitFactor = grossLoss > 0 ? (grossProfit / grossLoss).toFixed(2) : (grossProfit > 0 ? 'MAX' : '0.00');
       const signPL = totalPL >= 0 ? '+' : '';
+      const signPips = totalPeriodPips >= 0 ? '+' : '';
+
+      // Progress to Goal Calculation
+      const targetGoal = user.target_balance ? Number(user.target_balance) : (s.initialBal > 0 ? Math.round(s.initialBal * 1.2) : 10800);
+      const goalPct = targetGoal > 0 ? Math.min(100, Math.max(0, (s.currentEquity / targetGoal) * 100)) : 0;
+      const pBar = renderProgressBar(goalPct, 10);
+      const remainingGoal = Math.max(0, targetGoal - s.currentEquity);
+      const isTargetReached = s.currentEquity >= targetGoal;
+
+      // Contribution of this period to goal
+      const growthNeeded = targetGoal - s.initialBal;
+      const contrPct = growthNeeded > 0 ? (totalPL / growthNeeded) * 100 : (totalPL / targetGoal) * 100;
+      const contrSign = contrPct >= 0 ? '+' : '';
 
       const msg = `📊 <b>RINGKASAN PERFORMA: ${label}</b>\n` +
                   `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                  `👤 <b>Akun:</b> <code>${user.username}</code>\n` +
-                  `📦 <b>Total Trades:</b> <b>${filteredTrades.length}</b> (Menang: ${wins} | Kalah: ${losses})\n` +
-                  `🎯 <b>Win Rate:</b> <b>${winRate}%</b>\n` +
-                  `⚖️ <b>Profit Factor:</b> <b>${profitFactor}</b>\n` +
-                  `💵 <b>Net Realized P/L:</b> <b>${signPL}$${totalPL.toFixed(2)}</b>\n` +
+                  `👤 <b>Akun:</b> <code>${user.username}</code> | 🏷️ <b>Tipe:</b> ${user.currency || 'USD'}\n\n` +
+                  `🎯 <b>PROGRESS TO GOAL:</b>\n` +
+                  `• Target Equity: <b>${sym}${targetGoal.toLocaleString('en-US', { minimumFractionDigits: 2 })}</b>\n` +
+                  `• Progres: <b>${pBar} ${goalPct.toFixed(1)}%</b>\n` +
+                  `• Status: <b>${isTargetReached ? '🏆 TARGET TERCAPAI!' : `Sisa ${sym}${remainingGoal.toLocaleString('en-US', { minimumFractionDigits: 2 })} lagi`}</b>\n` +
+                  `• Kontribusi ${label === 'HARI INI' ? 'Hari Ini' : 'Periode'}: <b>${signPL}${sym}${totalPL.toLocaleString('en-US', { minimumFractionDigits: 2 })}</b> (${contrSign}${contrPct.toFixed(1)}% ke target)\n\n` +
+                  `📈 <b>STATISTIK TRADING:</b>\n` +
+                  `• Total Trades: <b>${filteredTrades.length}</b> (Menang: ${wins} | Kalah: ${losses})\n` +
+                  `• Win Rate: <b>${winRate}%</b>\n` +
+                  `• Profit Factor: <b>${profitFactor}</b>\n` +
+                  `• Akumulasi Pips: <b>${signPips}${totalPeriodPips} Pips</b>\n` +
+                  `• Net Realized P/L: <b>${signPL}${sym}${totalPL.toLocaleString('en-US', { minimumFractionDigits: 2 })}</b>\n` +
                   `────────────────────────────\n` +
-                  `⚡ <b>Equity Terkini:</b> <b>$${s.currentEquity.toFixed(2)}</b>`;
+                  `⚡ <b>CURRENT EQUITY:</b> <b>${sym}${s.currentEquity.toLocaleString('en-US', { minimumFractionDigits: 2 })}</b>\n` +
+                  `<i>💡 Ubah target goal dengan: <code>/setgoal [jumlah]</code></i>`;
 
       const buttons = [
         [Markup.button.callback('📊 Hari Ini', 'cmd_today'), Markup.button.callback('📈 7 Hari', 'cmd_weekly')],
-        [Markup.button.callback('📝 Jurnal Trade Baru', 'cmd_start_journal'), Markup.button.callback('🔙 Menu', 'cmd_menu')]
+        [Markup.button.callback('📝 Jurnal Baru', 'cmd_start_journal'), Markup.button.callback('🚀 Jurnal Bulk', 'cmd_bulk_prompt')],
+        [Markup.button.callback('🎯 Atur Target (/setgoal)', 'cmd_setgoal'), Markup.button.callback('💰 Cek Saldo', 'cmd_saldo')],
+        [Markup.button.callback('📱 Menu Utama', 'cmd_menu')]
       ];
 
       await sendOrEdit(ctx, msg, false, buttons);
@@ -1562,6 +2016,108 @@ export function initTelegramBot(db: any) {
   bot.command('stats', (ctx) => getStatsByTimeframe(ctx, 'all'));
   bot.action('cmd_today', (ctx) => getStatsByTimeframe(ctx, 'today'));
   bot.action('cmd_weekly', (ctx) => getStatsByTimeframe(ctx, 'weekly'));
+
+  // COMMAND: /setgoal /goal /target - Configure target balance / equity goal
+  const handleSetGoal = async (ctx: any, customValue?: number) => {
+    try {
+      const telegramId = ctx.from?.id?.toString();
+      const user = await getActiveUser(telegramId, ctx.from?.username);
+      if (!user) return sendUnlinkedPrompt(ctx);
+
+      let targetGoal = customValue;
+      if (targetGoal === undefined) {
+        const text = (ctx.message?.text || '').trim();
+        const parts = text.split(/\s+/);
+        if (parts.length > 1) {
+          const parsed = parseFloat(parts[1].replace(/,/g, '').replace('$', '').replace('¢', ''));
+          if (!isNaN(parsed) && parsed > 0) {
+            targetGoal = parsed;
+          }
+        }
+      }
+
+      const isNano = user.currency === 'NANO';
+      const isCent = user.currency === 'USC' || isNano;
+      const sym = isCent ? '¢' : (user.currency === 'IDR' ? 'Rp ' : '$');
+
+      if (targetGoal !== undefined && !isNaN(targetGoal) && targetGoal > 0) {
+        await db.execute({
+          sql: "UPDATE users SET target_balance = ? WHERE id = ?",
+          args: [targetGoal, user.id]
+        });
+        user.target_balance = targetGoal;
+
+        const s = await getUserEquityData(user.id, user);
+        const remaining = Math.max(0, targetGoal - s.currentEquity);
+        const pct = targetGoal > 0 ? Math.min(100, Math.max(0, (s.currentEquity / targetGoal) * 100)) : 0;
+        const pBar = renderProgressBar(pct, 10);
+        const isReached = s.currentEquity >= targetGoal;
+
+        const successMsg =
+          `🎯 <b>TARGET GOAL BERHASIL DIATUR!</b>\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `👤 Akun: <code>${user.username}</code>\n` +
+          `🎯 Target Equity: <b>${sym}${targetGoal.toLocaleString('en-US', { minimumFractionDigits: 2 })}</b>\n` +
+          `⚡ Equity Terkini: <b>${sym}${s.currentEquity.toLocaleString('en-US', { minimumFractionDigits: 2 })}</b>\n` +
+          `📊 Progres: <b>${pBar} ${pct.toFixed(1)}%</b>\n` +
+          `🏁 Status: <b>${isReached ? '🏆 TARGET TERCAPAI!' : `Sisa ${sym}${remaining.toLocaleString('en-US', { minimumFractionDigits: 2 })} lagi`}</b>\n\n` +
+          `💡 <i>Kini setiap perintah <code>/today</code> otomatis memantau progres Anda menuju target goal ini!</i>`;
+
+        const btns = [
+          [Markup.button.callback('📊 Cek Progres Hari Ini', 'cmd_today'), Markup.button.callback('💰 Cek Saldo', 'cmd_saldo')],
+          [Markup.button.callback('📱 Menu Utama', 'cmd_menu')]
+        ];
+        return sendOrEdit(ctx, successMsg, false, btns);
+      }
+
+      // Show current goal & quick preset buttons
+      const currentGoal = user.target_balance ? Number(user.target_balance) : (user.initial_balance ? Number(user.initial_balance) * 1.2 : 10800);
+      const s = await getUserEquityData(user.id, user);
+      const remaining = Math.max(0, currentGoal - s.currentEquity);
+      const pct = currentGoal > 0 ? Math.min(100, Math.max(0, (s.currentEquity / currentGoal) * 100)) : 0;
+      const pBar = renderProgressBar(pct, 10);
+      const isReached = s.currentEquity >= currentGoal;
+
+      const msg =
+        `🎯 <b>PENGATURAN TARGET GOAL TRADING (/setgoal)</b>\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `👤 Akun: <code>${user.username}</code>\n` +
+        `🎯 Target Saat Ini: <b>${sym}${currentGoal.toLocaleString('en-US', { minimumFractionDigits: 2 })}</b>\n` +
+        `⚡ Equity Saat Ini: <b>${sym}${s.currentEquity.toLocaleString('en-US', { minimumFractionDigits: 2 })}</b>\n` +
+        `📊 Progres: <b>${pBar} ${pct.toFixed(1)}%</b>\n` +
+        `🏁 Status: <b>${isReached ? '🏆 TARGET TERCAPAI!' : `Sisa ${sym}${remaining.toLocaleString('en-US', { minimumFractionDigits: 2 })} lagi`}</b>\n\n` +
+        `Pilih nominal target cepat di bawah atau ketik:\n` +
+        `<code>/setgoal [jumlah]</code> (contoh: <code>/setgoal 20000</code>)`;
+
+      const presets = isCent
+        ? [10000, 25000, 50000, 100000, 200000, 500000]
+        : [1500, 2000, 5000, 10000, 25000, 50000];
+
+      const presetRows: any[] = [];
+      let currentRow: any[] = [];
+      presets.forEach(val => {
+        currentRow.push(Markup.button.callback(`${sym}${val >= 1000 ? `${val/1000}k` : val}`, `cmd_setgoal_${val}`));
+        if (currentRow.length === 3) {
+          presetRows.push(currentRow);
+          currentRow = [];
+        }
+      });
+      if (currentRow.length > 0) presetRows.push(currentRow);
+      presetRows.push([Markup.button.callback('📱 Kembali ke Menu', 'cmd_menu')]);
+
+      return sendOrEdit(ctx, msg, false, presetRows);
+    } catch (e) {
+      console.error('handleSetGoal error:', e);
+      await ctx.reply('❌ Terjadi kesalahan saat mengatur target goal.');
+    }
+  };
+
+  bot.command(['setgoal', 'goal', 'target', 'settarget'], (ctx) => handleSetGoal(ctx));
+  bot.action('cmd_setgoal', (ctx) => handleSetGoal(ctx));
+  bot.action(/^cmd_setgoal_(\d+)$/, async (ctx: any) => {
+    const val = parseFloat(ctx.match[1]);
+    await handleSetGoal(ctx, val);
+  });
 
   // COMMAND: /lot - Automatic position size calculator with custom risk integration
   const handleLotCalc = async (ctx: any) => {
@@ -2523,12 +3079,17 @@ export function initTelegramBot(db: any) {
     if (user) {
       const s = await getUserEquityData(user.id, user);
       const isNano = user.currency === 'NANO';
-      const isCent = user.currency === 'USC';
+      const isCent = user.currency === 'USC' || isNano;
       const typeLabel = isNano ? 'Nano (1¢/lot)' : isCent ? 'Cent (10¢/lot)' : 'Standard ($10/lot)';
-      const unitSym = isNano ? '¢' : isCent ? '¢' : '$';
-      msg += `👤 Akun: <code>${user.username}</code> | Mode: <code>${user.current_mode || 'backtest'}</code>\n` +
+      const unitSym = isCent ? '¢' : (user.currency === 'IDR' ? 'Rp ' : '$');
+      const targetGoal = user.target_balance ? Number(user.target_balance) : (s.initialBal > 0 ? Math.round(s.initialBal * 1.2) : 10800);
+      const goalPct = targetGoal > 0 ? Math.min(100, Math.max(0, (s.currentEquity / targetGoal) * 100)) : 0;
+      const pBar = renderProgressBar(goalPct, 8);
+
+      msg += `👤 Akun: <code>${user.username}</code> | Mode: <code>${user.current_mode || 'live'}</code>\n` +
              `🏷️ Tipe Akun: <b>${typeLabel}</b> | WR: <b>${s.winRate}%</b>\n` +
-             `💰 Equity: <b>${unitSym}${s.currentEquity.toFixed(2)}</b>\n\n`;
+             `💰 Equity: <b>${unitSym}${s.currentEquity.toFixed(2)}</b>\n` +
+             `🎯 Goal: <b>${pBar} ${goalPct.toFixed(1)}%</b> (${unitSym}${s.currentEquity.toFixed(0)} / ${unitSym}${targetGoal.toFixed(0)})\n\n`;
     } else {
       msg += `⚠️ Akun belum terhubung. Klik tombol hubungkan akun di bawah.\n\n`;
     }
@@ -2536,8 +3097,9 @@ export function initTelegramBot(db: any) {
     msg += `Pilih menu aksi cepat:`;
 
     const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback('📝 Jurnal Trade Baru', 'cmd_start_journal'), Markup.button.callback('💰 Cek Saldo & Equity', 'cmd_saldo')],
+      [Markup.button.callback('📝 Jurnal Baru', 'cmd_start_journal'), Markup.button.callback('🚀 Jurnal Bulk', 'cmd_bulk_prompt')],
       [Markup.button.callback('📊 Hari Ini (Today)', 'cmd_today'), Markup.button.callback('📈 7 Hari (Weekly)', 'cmd_weekly')],
+      [Markup.button.callback('💰 Cek Saldo & Equity', 'cmd_saldo'), Markup.button.callback('🎯 Atur Target Goal', 'cmd_setgoal')],
       [Markup.button.callback('🧮 Kalkulator Lot', 'cmd_lot'), Markup.button.callback('⏳ Trade Running', 'cmd_running')],
       [Markup.button.callback('📰 Berita Pasar (News)', 'cmd_news'), Markup.button.callback('🛡️ Set Risiko %', 'cmd_setrisk_menu')],
       [Markup.button.callback('💵 Set Modal Awal', 'cmd_setmodal'), Markup.button.callback('🏷️ Ganti Tipe Akun', 'cmd_setaccount')],
@@ -2559,24 +3121,28 @@ export function initTelegramBot(db: any) {
   const handleHelp = async (ctx: any) => {
     const helpMsg = `📖 <b>PANDUAN LENGKAP & DAFTAR COMMAND BOT</b>\n` +
                     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
-                    `📝 <b>1. PENCATATAN TRADE & JURNAL</b>\n` +
-                    `• <code>/jurnal</code> — Wizard interaktif catat trade langkah demi langkah\n` +
-                    `• <code>/quick [pair] [buy/sell] [lot] [pnl]</code> — Catat trade 1 baris cepat\n` +
+                    `🚀 <b>1. PENCATATAN TRADE & JURNAL CEPAT</b>\n` +
+                    `• <code>/bulk</code> — Catat banyak trade sekaligus dalam 1 pesan\n` +
+                    `  <i>Contoh:</i>\n` +
+                    `  <code>/bulk\n` +
+                    `  XAUUSD BUY 0.05 +120 WIN Retest H1\n` +
+                    `  XAUUSD SELL 0.10 -40 LOSS False Break\n` +
+                    `  BUY 0.02 +30</code>\n` +
+                    `• <code>/quick [pair] [buy/sell] [lot] [pnl]</code> — Catat 1 trade cepat\n` +
                     `  <i>Contoh:</i> <code>/quick XAUUSD BUY 0.10 +150 WIN Setup FVG</code>\n` +
                     `• <code>/buy [pair] [lot] [pnl]</code> — Shortcut instan posisi BUY\n` +
                     `  <i>Contoh:</i> <code>/buy XAUUSD 0.05 +80</code>\n` +
                     `• <code>/sell [pair] [lot] [pnl]</code> — Shortcut instan posisi SELL\n` +
                     `  <i>Contoh:</i> <code>/sell EURUSD 0.10 -40</code>\n` +
+                    `• <code>/jurnal</code> — Wizard interaktif input trade langkah demi langkah\n` +
                     `• <code>/running</code> — Lihat daftar trade aktif / pending order\n` +
-                    `• <code>/close [id] [win/loss] [pnl]</code> — Tutup trade terbuka\n` +
+                    `• <code>/close [id] [win/loss] [pnl]</code> — Tutup trade running\n` +
                     `• <code>/undo</code> — Batalkan / hapus trade terakhir jika salah input\n\n` +
-                    `💰 <b>2. MODAL, KEUANGAN & PERFORMA</b>\n` +
-                    `• <code>/setmodal [jumlah]</code> — Setel modal awal akun (cth: <code>/setmodal 10000</code>)\n` +
-                    `• <code>/saldo</code> — Cek saldo modal awal, equity & status drawdown\n` +
-                    `• <code>/deposit [jumlah]</code> — Catat penambahan deposit saldo\n` +
-                    `• <code>/wd [jumlah]</code> — Catat penarikan keuntungan (withdrawal)\n` +
-                    `• <code>/today</code> — Rekap statistik & win rate hari ini\n` +
-                    `• <code>/weekly</code> — Rekap statistik performa 7 hari terakhir\n\n` +
+                    `🎯 <b>2. TARGET GOAL & MONITORING PERFORMA</b>\n` +
+                    `• <code>/today</code> — Rekap statistik hari ini + <b>visual progress to goal</b>\n` +
+                    `• <code>/setgoal [jumlah]</code> — Atur target equity akun (cth: <code>/setgoal 20000</code>)\n` +
+                    `• <code>/weekly</code> — Evaluasi performa trading 7 hari terakhir\n` +
+                    `• <code>/saldo</code> — Cek saldo modal awal, equity & status drawdown\n\n` +
                     `🧮 <b>3. KALKULATOR & RISK MANAGEMENT</b>\n` +
                     `• <code>/lot [pips]</code> — Hitung lot rekomendasi otomatis sesuai toleransi risiko\n` +
                     `• <code>/setrisk [persen]</code> — Atur toleransi risiko per trade (cth: <code>/setrisk 1.5</code>)\n` +
@@ -2584,21 +3150,22 @@ export function initTelegramBot(db: any) {
                     `   ├ <b>Standard</b> ($10 per pip untuk 1.00 lot)\n` +
                     `   ├ <b>Cent</b> (10¢ per pip untuk 1.00 lot)\n` +
                     `   └ <b>Nano</b> (1¢ per pip untuk 1.00 lot)\n\n` +
-                    `📰 <b>4. INFORMASI & ANALISA PASAR</b>\n` +
-                    `• <code>/news</code> — Kalender ekonomi Forex & rilis berita High-Impact\n` +
-                    `  <i>Opsi filter:</i> <code>/news today</code>, <code>/news usd</code>, <code>/news high</code>\n\n` +
-                    `👥 <b>5. MULTI-AKUN & NAVIGASI</b>\n` +
-                    `• <code>/menu</code> — Buka Control Panel navigasi interaktif utama\n` +
+                    `💵 <b>4. MODAL & KEUANGAN</b>\n` +
+                    `• <code>/setmodal [jumlah]</code> — Setel modal awal akun (cth: <code>/setmodal 10000</code>)\n` +
+                    `• <code>/deposit [jumlah]</code> — Catat penambahan deposit saldo\n` +
+                    `• <code>/wd [jumlah]</code> — Catat penarikan keuntungan (withdrawal)\n\n` +
+                    `📰 <b>5. INFORMASI & MULTI-AKUN</b>\n` +
+                    `• <code>/news</code> — Kalender berita ekonomi Forex & rilis High-Impact XAUUSD\n` +
+                    `• <code>/menu</code> — Buka Control Panel tombol navigasi utama\n` +
                     `• <code>/accounts</code> — Daftar akun trading yang terhubung\n` +
                     `• <code>/switch [username]</code> — Ganti akun aktif yang digunakan\n` +
                     `• <code>/link [username]</code> — Hubungkan akun Telegram ke web\n` +
                     `• <code>/login [user] [pass]</code> — Login akun resmi via Telegram\n\n` +
                     `⚠️ <b>6. RESET & PEMBERSIHAN DATA</b>\n` +
-                    `• <code>/reset</code> — Hapus bersih seluruh riwayat log trade, depo/wd, dan kembalikan akun ke modal awal (dilengkapi tombol konfirmasi keamanan)\n\n` +
+                    `• <code>/reset</code> — Hapus bersih seluruh data akun (trade & saldo) dengan konfirmasi keamanan\n\n` +
                     `📸 <b>7. SCREENSHOT & CHART ENTRY</b>\n` +
                     `• Kirim foto chart + caption: <code>XAUUSD BUY 0.10 +150 WIN Setup Retest</code>\n` +
-                    `• Atau kirim foto chart saja, lalu tekan tombol <i>[Catat Jurnal dengan Foto Ini]</i>\n` +
-                    `• TradingView: Tempel link chart snapshot di command /quick`;
+                    `• Atau kirim foto chart saja, lalu tekan tombol <i>[Catat Jurnal dengan Foto Ini]</i>`;
 
     await sendOrEdit(ctx, helpMsg, true);
   };
@@ -2734,7 +3301,19 @@ export function initTelegramBot(db: any) {
         );
       }
 
-      // 2. Check if CSV Trade Format (11+ columns)
+      // 2. Check if Multi-line Bulk Trade pasted directly
+      if (text.includes('\n')) {
+        const splitLines = text.split('\n').map(l => l.trim()).filter(Boolean);
+        if (splitLines.length > 1) {
+          const validTradesCount = splitLines.filter(l => parseBulkTradeLine(l) !== null).length;
+          if (validTradesCount >= 2) {
+            ctx.message.text = `/bulk\n${text}`;
+            return handleBulkTrades(ctx);
+          }
+        }
+      }
+
+      // 3. Check if CSV Trade Format (11+ columns)
       if (text.includes(',')) {
         const parts = parseCSVLine(text);
         if (parts.length >= 11 && ['BUY', 'SELL'].includes(parts[3]?.toUpperCase())) {
@@ -2744,7 +3323,7 @@ export function initTelegramBot(db: any) {
           const [dateStr, timeStr, pair, type, setup, entry, sl, tp, lot, status, pnl, emosi, ...notesArr] = parts;
           const notes = notesArr.join(', ');
           const actualUserId = user.id;
-          const mode = user.current_mode || 'backtest';
+          const mode = user.current_mode || 'live';
           const realizedPl = parseFloat(pnl) || 0;
           const entryPrice = parseFloat(entry) || 0;
           const slPrice = parseFloat(sl) || 0;
@@ -2787,7 +3366,7 @@ export function initTelegramBot(db: any) {
         }
       }
 
-      // 3. Natural Trade Detection (e.g. "BUY XAUUSD 0.1 +120" or "SELL EURUSD 0.05 -35")
+      // 4. Natural Single Trade Detection (e.g. "BUY XAUUSD 0.1 +120" or "SELL EURUSD 0.05 -35")
       const upper = text.toUpperCase();
       if ((upper.startsWith('BUY ') || upper.startsWith('SELL ')) && (upper.includes('+') || upper.includes('-') || upper.includes('WIN') || upper.includes('LOSS'))) {
         ctx.message.text = `/quick ${text}`;

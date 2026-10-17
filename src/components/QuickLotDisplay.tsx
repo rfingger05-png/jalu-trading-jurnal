@@ -50,7 +50,7 @@ export default function QuickLotDisplay({ currentEquity, user, onOpenCalculators
     <div className="bg-[#1A1A1A] rounded-lg border border-[#2D2D2D] p-3.5 sm:p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 text-xs transition-colors shadow-xs">
       {/* Left: Quick Setup Info & Inputs */}
       <div className="flex items-center gap-3 w-full md:w-auto">
-        <div className="w-8 h-8 rounded-md bg-[#252525] border border-[#333333] text-[#00E676] flex items-center justify-center shrink-0">
+        <div className="w-8 h-8 rounded-md bg-[#252525] border border-[#333333] text-[#FF3333] flex items-center justify-center shrink-0">
           <Zap size={16} />
         </div>
         
@@ -59,7 +59,7 @@ export default function QuickLotDisplay({ currentEquity, user, onOpenCalculators
             <span className="text-[11px] font-mono uppercase tracking-wider font-bold text-white">
               QUICK TRADE SETUP
             </span>
-            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#262626] text-amber-300 font-semibold border border-[#3D3D3D]">
+            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#201010] text-[#FF3333] font-semibold border border-[#FF3333]/30">
               XAUUSD
             </span>
             <span className="text-[10px] font-mono text-[#A3A3A3] uppercase">
@@ -87,7 +87,7 @@ export default function QuickLotDisplay({ currentEquity, user, onOpenCalculators
                   max="10"
                   value={riskPercent}
                   onChange={(e) => setRiskPercent(parseFloat(e.target.value) || 0)}
-                  className="w-14 px-1.5 py-0.5 rounded bg-[#121212] border border-[#333333] text-white text-right font-bold focus:border-[#00E676] focus:outline-none"
+                  className="w-14 px-1.5 py-0.5 rounded bg-[#121212] border border-[#333333] text-white text-right font-bold focus:border-[#FF3333] focus:outline-none"
                 />
               </div>
 
@@ -100,7 +100,7 @@ export default function QuickLotDisplay({ currentEquity, user, onOpenCalculators
                   max="200"
                   value={slPips}
                   onChange={(e) => setSlPips(parseInt(e.target.value) || 0)}
-                  className="w-16 px-1.5 py-0.5 rounded bg-[#121212] border border-[#333333] text-white text-right font-bold focus:border-[#00E676] focus:outline-none"
+                  className="w-16 px-1.5 py-0.5 rounded bg-[#121212] border border-[#333333] text-white text-right font-bold focus:border-[#FF3333] focus:outline-none"
                 />
               </div>
 
@@ -125,11 +125,11 @@ export default function QuickLotDisplay({ currentEquity, user, onOpenCalculators
         </div>
       </div>
 
-      {/* Right: Eye-catching REC. LOT Badge */}
+      {/* Right: Eye-catching REC. LOT Badge in Crimson Red */}
       <div className="flex items-center gap-3 w-full md:w-auto justify-between md:justify-end border-t md:border-t-0 border-[#2D2D2D] pt-2.5 md:pt-0">
-        <div className="flex items-center gap-2.5 px-3.5 py-2 rounded-md bg-[#121212] border border-[#00E676]/40 text-[#00E676] font-mono shadow-xs">
+        <div className="flex items-center gap-2.5 px-3.5 py-2 rounded-md bg-[#1E1111] border border-[#FF3333]/50 text-[#FF3333] font-mono shadow-xs">
           <span className="text-[10px] uppercase font-bold tracking-wider text-[#A3A3A3]">REC.</span>
-          <span className="text-base font-extrabold tracking-tight text-[#00E676] tabular-nums">
+          <span className="text-base font-extrabold tracking-tight text-[#FF3333] tabular-nums">
             LOT: {lotSize}
           </span>
         </div>
@@ -137,7 +137,7 @@ export default function QuickLotDisplay({ currentEquity, user, onOpenCalculators
         {onOpenCalculators && (
           <button
             onClick={onOpenCalculators}
-            className="text-[11px] font-mono text-[#A3A3A3] hover:text-[#00E676] transition-colors py-1 cursor-pointer"
+            className="text-[11px] font-mono text-[#A3A3A3] hover:text-[#FF3333] transition-colors py-1 cursor-pointer"
             title="Buka kalkulator lot lengkap"
           >
             Calculator →
