@@ -181,9 +181,9 @@ export default function App() {
   if (userLoading) {
     return (
       <div className="bg-[#0D0D0D] min-h-screen flex items-center justify-center font-mono text-white">
-        <div className="text-xs font-semibold tracking-wider flex items-center gap-2">
-          <div className="w-4 h-4 border-2 border-[#00E676] border-t-transparent rounded-full animate-spin"></div>
-          Memuat JURNALKU...
+        <div className="text-xs font-semibold tracking-wider flex items-center gap-2.5">
+          <div className="w-4 h-4 border-2 border-[#FF3333] border-t-transparent rounded-full animate-spin"></div>
+          <span>Memuat JURNALKU...</span>
         </div>
       </div>
     );
@@ -214,26 +214,50 @@ export default function App() {
   return (
     <div className="bg-[#0D0D0D] min-h-screen flex flex-col font-sans text-white">
       
-      {/* 3. Global Navigation Header — Clean, Uncluttered, Minimalist */}
-      <header className="h-14 shrink-0 border-b border-[#2D2D2D] bg-[#0D0D0D]/95 backdrop-blur-md sticky top-0 z-40 px-4 sm:px-6 flex items-center justify-between gap-4">
+      {/* Global Navigation Header — Strict Red-Black-White, JK JURNALKU Branding */}
+      <header className="h-14 shrink-0 border-b border-[#262626] bg-[#000000]/95 backdrop-blur-md sticky top-0 z-40 px-4 sm:px-6 flex items-center justify-between gap-4">
         
-        {/* Left: Branding "JURNALKU" in clean, bold two-tone text style (White & Crimson Red) */}
+        {/* Left: Official Branding "JK JURNALKU" (ikon kotak gelap dengan huruf putih "J" dan merah "K", berdampingan dengan teks "JURNAL" putih dan "KU" merah) */}
         <div 
-          className="flex items-center gap-2.5 cursor-pointer select-none" 
+          className="flex items-center gap-2.5 cursor-pointer select-none group" 
           onClick={() => setActiveTab('dashboard')}
         >
-          <div className="w-7 h-7 rounded bg-[#1A1A1A] border border-[#2D2D2D] text-white flex items-center justify-center font-mono font-black text-xs tracking-tighter">
-            J<span className="text-[#FF3333]">K</span>
+          <div className="w-8 h-8 rounded-lg bg-[#141414] border border-[#262626] text-white flex items-center justify-center font-mono font-black text-xs tracking-tighter shadow-inner group-hover:border-[#FF3333] transition-colors">
+            <span className="text-white">J</span><span className="text-[#FF3333]">K</span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-base font-black tracking-tight text-white font-mono">
-              JURNAL<span className="text-[#FF3333]">KU</span>
+            <span className="text-base font-black tracking-tight font-mono">
+              <span className="text-white">JURNAL</span><span className="text-[#FF3333]">KU</span>
             </span>
-            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#1A1A1A] text-[#A3A3A3] border border-[#2D2D2D] font-semibold">
+            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#141414] text-[#A3A3A3] border border-[#262626] font-semibold">
               XAUUSD
             </span>
           </div>
         </div>
+
+        {/* Desktop Quick Nav Tabs (Direct 6 Modules Access) */}
+        <nav className="hidden lg:flex items-center gap-1 font-mono text-xs">
+          {[
+            { id: 'dashboard', label: 'Dashboard' },
+            { id: 'history', label: 'History' },
+            { id: 'gallery', label: 'Gallery Chart' },
+            { id: 'calculators', label: 'Lot & MM' },
+            { id: 'news', label: 'News (Gold)' },
+            { id: 'analytics', label: 'Analytics' },
+          ].map(item => (
+            <button
+              key={item.id}
+              onClick={() => setActiveTab(item.id as any)}
+              className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                activeTab === item.id
+                  ? 'bg-[#FF3333] text-white shadow-xs'
+                  : 'text-[#A3A3A3] hover:text-white hover:bg-[#141414]'
+              }`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </nav>
 
         {/* Right: Quick Equity Pill, Theme Toggle, and Hamburger Menu Icon */}
         <div className="flex items-center gap-2.5 text-xs shrink-0">
@@ -241,10 +265,10 @@ export default function App() {
           {/* Telegram Indicator (if connected) */}
           {telegramBotInfo?.authenticated && (
             <div 
-              className="hidden md:flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-mono text-[#A3A3A3] border border-[#2D2D2D] rounded-md bg-[#141414]"
+              className="hidden md:flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-mono text-[#A3A3A3] border border-[#262626] rounded-md bg-[#141414]"
               title="Telegram Bot Aktif"
             >
-              <span className="w-1.5 h-1.5 rounded-full bg-[#00E676] animate-pulse"></span>
+              <span className="w-1.5 h-1.5 rounded-full bg-[#FFFFFF] animate-pulse"></span>
               <span>@{telegramBotInfo.username}</span>
             </div>
           )}
@@ -252,7 +276,7 @@ export default function App() {
           {/* Quick Equity Pill / Banking Trigger */}
           <button
             onClick={() => setShowBankingModal(true)}
-            className="px-3 py-1.5 rounded-md border border-[#2D2D2D] bg-[#1A1A1A] hover:border-[#3D3D3D] transition-colors flex items-center gap-2 text-white cursor-pointer"
+            className="px-3 py-1.5 rounded-md border border-[#262626] bg-[#141414] hover:border-[#3D3D3D] transition-colors flex items-center gap-2 text-white cursor-pointer"
             title="Kelola Saldo & Transaksi"
           >
             <Wallet size={13} className="text-[#A3A3A3]" />
@@ -267,7 +291,7 @@ export default function App() {
           {/* Theme Toggle */}
           <button
             onClick={() => setDarkMode(!darkMode)}
-            className="p-2 text-[#A3A3A3] hover:text-white rounded-md border border-[#2D2D2D] bg-[#1A1A1A] hover:border-[#3D3D3D] transition-colors cursor-pointer"
+            className="p-2 text-[#A3A3A3] hover:text-white rounded-md border border-[#262626] bg-[#141414] hover:border-[#3D3D3D] transition-colors cursor-pointer"
             title="Toggle Dark / Light Mode"
           >
             {darkMode ? <Sun size={14} className="text-amber-400" /> : <Moon size={14} className="text-sky-400" />}
@@ -276,7 +300,11 @@ export default function App() {
           {/* Hamburger Menu Trigger (3-line icon) */}
           <button
             onClick={() => setMenuOpen(!menuOpen)}
-            className="p-2 text-white rounded-md border border-[#2D2D2D] bg-[#1A1A1A] hover:border-[#FF3333] transition-colors cursor-pointer flex items-center justify-center"
+            className={`p-2 rounded-md border transition-colors cursor-pointer flex items-center justify-center ${
+              menuOpen 
+                ? 'border-[#FF3333] bg-[#FF3333] text-white' 
+                : 'border-[#262626] bg-[#141414] text-white hover:border-[#FF3333]'
+            }`}
             title="Menu Navigasi"
             aria-label="Open Navigation"
           >
@@ -286,167 +314,161 @@ export default function App() {
         </div>
       </header>
 
-      {/* Hamburger Menu Drawer Navigation (Houses all 5 core routes & utilities) */}
+      {/* Hamburger Menu Drawer Navigation (Houses all 6 modules & utilities) */}
       {menuOpen && (
         <div className="fixed inset-0 z-50 flex">
           {/* Backdrop */}
           <div 
-            className="fixed inset-0 bg-black/80 backdrop-blur-xs transition-opacity" 
+            className="fixed inset-0 bg-black/85 backdrop-blur-xs transition-opacity" 
             onClick={() => setMenuOpen(false)}
           ></div>
 
           {/* Drawer Sidebar */}
-          <div className="relative ml-auto w-80 bg-[#121212] h-full shadow-2xl p-6 flex flex-col z-50 border-l border-[#2D2D2D] animate-in slide-in-from-right duration-200">
+          <div className="relative ml-auto w-80 bg-[#121212] h-full shadow-2xl p-6 flex flex-col z-50 border-l border-[#262626] animate-in slide-in-from-right duration-200">
             
-            {/* Drawer Header */}
-            <div className="flex items-center justify-between pb-4 border-b border-[#2D2D2D]">
+            {/* Drawer Header with Official Logo */}
+            <div className="flex items-center justify-between pb-4 border-b border-[#262626]">
               <div className="flex items-center gap-2">
-                <span className="font-black text-sm text-white font-mono tracking-tight">
-                  JURNAL<span className="text-[#FF3333]">KU</span>
+                <div className="w-7 h-7 rounded-lg bg-[#141414] border border-[#262626] text-white flex items-center justify-center font-mono font-black text-xs">
+                  <span className="text-white">J</span><span className="text-[#FF3333]">K</span>
+                </div>
+                <span className="font-black text-sm font-mono tracking-tight">
+                  <span className="text-white">JURNAL</span><span className="text-[#FF3333]">KU</span>
                 </span>
-                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#1A1A1A] text-[#A3A3A3] border border-[#2D2D2D]">
-                  LIVE JOURNAL
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#141414] text-[#A3A3A3] border border-[#262626]">
+                  XAUUSD
                 </span>
               </div>
               <button 
                 onClick={() => setMenuOpen(false)} 
-                className="text-[#A3A3A3] hover:text-white p-1 rounded hover:bg-[#1A1A1A] cursor-pointer"
+                className="text-[#A3A3A3] hover:text-white p-1 rounded hover:bg-[#141414] cursor-pointer"
               >
                 <X size={18} />
               </button>
             </div>
 
             {/* Account Quick Card */}
-            <div className="mt-4 p-3 rounded-lg bg-[#1A1A1A] border border-[#2D2D2D] flex items-center justify-between font-mono text-xs">
+            <div className="mt-4 p-3 rounded-lg bg-[#141414] border border-[#262626] flex items-center justify-between font-mono text-xs">
               <div className="flex flex-col">
                 <span className="text-[10px] text-[#A3A3A3] uppercase">Akun Trader</span>
                 <span className="font-bold text-white">@{user.username}</span>
               </div>
               <div className="flex flex-col text-right">
                 <span className="text-[10px] text-[#A3A3A3] uppercase">Mata Uang</span>
-                <span className="font-bold text-[#00E676]">{user.currency}</span>
+                <span className="font-bold text-white">{user.currency}</span>
               </div>
             </div>
 
-            {/* Core 5 Navigation Routes */}
-            <div className="flex flex-col gap-1.5 py-4 text-xs font-mono">
+            {/* Core 6 Modules Navigation */}
+            <div className="flex flex-col gap-1.5 py-4 text-xs font-mono overflow-y-auto">
               <span className="text-[10px] uppercase font-bold tracking-wider text-[#737373] px-2 mb-1">
-                Main Views
+                6 Modul Aplikasi
               </span>
 
-              {/* Route 1: Dashboard (Main Overview) */}
+              {/* Modul A: Dashboard (Quick Lot Calculator & Overview) */}
               <button
                 onClick={() => { setActiveTab('dashboard'); setMenuOpen(false); }}
                 className={`p-2.5 rounded-lg text-left flex items-center gap-3 cursor-pointer transition-colors ${
                   activeTab === 'dashboard' 
-                    ? 'bg-[#2D2D2D] text-white font-bold' 
-                    : 'text-[#A3A3A3] hover:text-white hover:bg-[#1A1A1A]'
+                    ? 'bg-[#FF3333] text-white font-bold' 
+                    : 'text-[#A3A3A3] hover:text-white hover:bg-[#141414]'
                 }`}
               >
-                <BarChart2 size={16} className={activeTab === 'dashboard' ? 'text-[#00E676]' : ''} />
-                <span>1. Dashboard (Overview)</span>
+                <BarChart2 size={16} />
+                <span>Modul A: Dashboard / Quick Lot</span>
               </button>
 
-              {/* Route 2: Trade History (Full Logs & CSV Export) */}
+              {/* Modul B: Trade History (Full Logs & CSV Export) */}
               <button
                 onClick={() => { setActiveTab('history'); setMenuOpen(false); }}
                 className={`p-2.5 rounded-lg text-left flex items-center gap-3 cursor-pointer transition-colors ${
                   activeTab === 'history' 
-                    ? 'bg-[#2D2D2D] text-white font-bold' 
-                    : 'text-[#A3A3A3] hover:text-white hover:bg-[#1A1A1A]'
+                    ? 'bg-[#FF3333] text-white font-bold' 
+                    : 'text-[#A3A3A3] hover:text-white hover:bg-[#141414]'
                 }`}
               >
-                <HistoryIcon size={16} className={activeTab === 'history' ? 'text-[#00E676]' : ''} />
-                <span>2. Trade History & Export</span>
+                <HistoryIcon size={16} />
+                <span>Modul B: Trade History (Closed)</span>
               </button>
 
-              {/* Route 3: Analytics & Weekly Review */}
+              {/* Modul C: Gallery Chart (Before & After Grid) */}
               <button
-                onClick={() => { setActiveTab('analytics'); setMenuOpen(false); }}
-                className={`p-2.5 rounded-lg text-left flex items-center gap-3 cursor-pointer transition-colors ${
-                  activeTab === 'analytics' 
-                    ? 'bg-[#2D2D2D] text-white font-bold' 
-                    : 'text-[#A3A3A3] hover:text-white hover:bg-[#1A1A1A]'
+                onClick={() => { setActiveTab('gallery'); setMenuOpen(false); }}
+                className={`p-2.5 rounded-lg text-left flex items-center justify-between cursor-pointer transition-colors ${
+                  activeTab === 'gallery' 
+                    ? 'bg-[#FF3333] text-white font-bold' 
+                    : 'text-[#A3A3A3] hover:text-white hover:bg-[#141414]'
                 }`}
               >
-                <Activity size={16} className={activeTab === 'analytics' ? 'text-[#00E676]' : ''} />
-                <span>3. Analytics & Weekly Review</span>
+                <div className="flex items-center gap-3">
+                  <Images size={16} />
+                  <span>Modul C: Gallery Chart (B/A)</span>
+                </div>
+                {tradesWithImagesCount > 0 && (
+                  <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-[#000000] text-white font-bold border border-[#262626]">
+                    {tradesWithImagesCount}
+                  </span>
+                )}
               </button>
 
-              {/* Route 4: Economic News (Major Events Only) */}
+              {/* Modul D: Lot Auto-Calculator & MM Compounding */}
+              <button
+                onClick={() => { setActiveTab('calculators'); setMenuOpen(false); }}
+                className={`p-2.5 rounded-lg text-left flex items-center gap-3 cursor-pointer transition-colors ${
+                  activeTab === 'calculators' 
+                    ? 'bg-[#FF3333] text-white font-bold' 
+                    : 'text-[#A3A3A3] hover:text-white hover:bg-[#141414]'
+                }`}
+              >
+                <Calculator size={16} />
+                <span>Modul D: Lot & MM Compounding</span>
+              </button>
+
+              {/* Modul E: Economic News (Tier-1 Major Events) */}
               <button
                 onClick={() => { setActiveTab('news'); setMenuOpen(false); }}
                 className={`p-2.5 rounded-lg text-left flex items-center justify-between cursor-pointer transition-colors ${
                   activeTab === 'news' 
-                    ? 'bg-[#2D2D2D] text-white font-bold' 
-                    : 'text-[#A3A3A3] hover:text-white hover:bg-[#1A1A1A]'
+                    ? 'bg-[#FF3333] text-white font-bold' 
+                    : 'text-[#A3A3A3] hover:text-white hover:bg-[#141414]'
                 }`}
               >
                 <div className="flex items-center gap-3">
-                  <Newspaper size={16} className={activeTab === 'news' ? 'text-[#FF3333]' : 'text-[#FF3333]'} />
-                  <span>4. Economic News (Gold)</span>
+                  <Newspaper size={16} />
+                  <span>Modul E: Economic News (Gold)</span>
                 </div>
                 <span className="w-2 h-2 rounded-full bg-[#FF3333] animate-pulse"></span>
               </button>
 
-              {/* Route 5: Settings */}
+              {/* Modul F: Analytics / Weekly Review */}
               <button
-                onClick={() => { setActiveTab('settings'); setMenuOpen(false); }}
+                onClick={() => { setActiveTab('analytics'); setMenuOpen(false); }}
                 className={`p-2.5 rounded-lg text-left flex items-center gap-3 cursor-pointer transition-colors ${
-                  activeTab === 'settings' 
-                    ? 'bg-[#2D2D2D] text-white font-bold' 
-                    : 'text-[#A3A3A3] hover:text-white hover:bg-[#1A1A1A]'
+                  activeTab === 'analytics' 
+                    ? 'bg-[#FF3333] text-white font-bold' 
+                    : 'text-[#A3A3A3] hover:text-white hover:bg-[#141414]'
                 }`}
               >
-                <SettingsIcon size={16} className={activeTab === 'settings' ? 'text-[#00E676]' : ''} />
-                <span>5. Settings & Risk</span>
+                <Activity size={16} />
+                <span>Modul F: Analytics & Review</span>
               </button>
             </div>
 
             {/* Utility Actions Section */}
             <div className="flex flex-col gap-1.5 pt-3 border-t border-[#262626] text-xs font-mono">
               <span className="text-[10px] uppercase font-bold tracking-wider text-[#737373] px-2 mb-1">
-                Trading Utilities
+                Aksi & Pengaturan
               </span>
 
               {/* + Log Trade */}
               <button
                 onClick={() => { setActiveTab('log'); setMenuOpen(false); }}
                 className={`p-2 rounded-lg text-left flex items-center gap-2.5 cursor-pointer transition-colors ${
-                  activeTab === 'log' ? 'bg-[#00E676]/15 text-[#00E676] font-bold border border-[#00E676]/30' : 'text-[#A3A3A3] hover:text-white'
+                  activeTab === 'log' ? 'bg-[#FF3333] text-white font-bold' : 'text-[#A3A3A3] hover:text-white'
                 }`}
               >
-                <PlusCircle size={15} className="text-[#00E676]" />
-                <span>+ Log New Trade</span>
-              </button>
-
-              {/* Galeri Chart */}
-              <button
-                onClick={() => { setActiveTab('gallery'); setMenuOpen(false); }}
-                className={`p-2 rounded-lg text-left flex items-center justify-between cursor-pointer transition-colors ${
-                  activeTab === 'gallery' ? 'bg-[#2D2D2D] text-white font-bold' : 'text-[#A3A3A3] hover:text-white'
-                }`}
-              >
-                <div className="flex items-center gap-2.5">
-                  <Images size={15} />
-                  <span>Galeri Chart Screenshot</span>
-                </div>
-                {tradesWithImagesCount > 0 && (
-                  <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-[#262626] text-amber-300 font-bold">
-                    {tradesWithImagesCount}
-                  </span>
-                )}
-              </button>
-
-              {/* Lot Size Calculator */}
-              <button
-                onClick={() => { setActiveTab('calculators'); setMenuOpen(false); }}
-                className={`p-2 rounded-lg text-left flex items-center gap-2.5 cursor-pointer transition-colors ${
-                  activeTab === 'calculators' ? 'bg-[#2D2D2D] text-white font-bold' : 'text-[#A3A3A3] hover:text-white'
-                }`}
-              >
-                <Calculator size={15} />
-                <span>Lot Calculator (Full)</span>
+                <PlusCircle size={15} />
+                <span>+ Catat Trade Baru</span>
               </button>
 
               {/* Banking / Saldo */}
@@ -458,12 +480,23 @@ export default function App() {
                 <span>Deposit / Withdraw Saldo</span>
               </button>
 
+              {/* Settings */}
+              <button
+                onClick={() => { setActiveTab('settings'); setMenuOpen(false); }}
+                className={`p-2 rounded-lg text-left flex items-center gap-2.5 cursor-pointer transition-colors ${
+                  activeTab === 'settings' ? 'bg-[#FF3333] text-white font-bold' : 'text-[#A3A3A3] hover:text-white'
+                }`}
+              >
+                <SettingsIcon size={15} />
+                <span>Pengaturan Akun & Risiko</span>
+              </button>
+
               {/* Prop Firm (if enabled) */}
               {user.prop_firm_enabled && (
                 <button
                   onClick={() => { setActiveTab('propfirm'); setMenuOpen(false); }}
                   className={`p-2 rounded-lg text-left flex items-center gap-2.5 cursor-pointer transition-colors ${
-                    activeTab === 'propfirm' ? 'bg-[#2D2D2D] text-white font-bold' : 'text-[#A3A3A3] hover:text-white'
+                    activeTab === 'propfirm' ? 'bg-[#FF3333] text-white font-bold' : 'text-[#A3A3A3] hover:text-white'
                   }`}
                 >
                   <Shield size={15} />
@@ -475,7 +508,7 @@ export default function App() {
               {user.role === 'admin' && (
                 <button
                   onClick={() => { setActiveTab('admin'); setMenuOpen(false); }}
-                  className="p-2 rounded-lg text-left flex items-center gap-2.5 text-amber-400 font-semibold cursor-pointer"
+                  className="p-2 rounded-lg text-left flex items-center gap-2.5 text-[#FF3333] font-semibold cursor-pointer"
                 >
                   <UserIcon size={15} />
                   <span>Admin Panel</span>
@@ -506,7 +539,7 @@ export default function App() {
       <main className="flex-1 flex flex-col min-h-0 overflow-hidden">
         {loading ? (
           <div className="flex-1 flex flex-col items-center justify-center text-[#A3A3A3] text-xs font-mono font-semibold tracking-wider gap-2">
-            <div className="w-5 h-5 border-2 border-[#00E676] border-t-transparent rounded-full animate-spin"></div>
+            <div className="w-5 h-5 border-2 border-[#FF3333] border-t-transparent rounded-full animate-spin"></div>
             Memuat data transaksi...
           </div>
         ) : (

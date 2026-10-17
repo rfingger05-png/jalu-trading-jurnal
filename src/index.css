@@ -7,11 +7,10 @@
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 
   --color-jurnal-bg: #0D0D0D;
-  --color-jurnal-card: #1A1A1A;
-  --color-jurnal-card-subtle: #141414;
-  --color-jurnal-border: #2D2D2D;
+  --color-jurnal-card: #141414;
+  --color-jurnal-card-subtle: #181818;
+  --color-jurnal-border: #262626;
   --color-jurnal-red: #FF3333;
-  --color-jurnal-green: #00E676;
   --color-jurnal-text: #FFFFFF;
   --color-jurnal-muted: #A3A3A3;
 }

@@ -643,19 +643,19 @@ export default function Dashboard({
                   {showMatrixLegend && (
                     <div className="absolute left-0 top-6 z-30 w-52 p-2.5 rounded-lg bg-[#121212] border border-[#333333] shadow-xl text-[11px] font-mono space-y-1.5 animate-in fade-in duration-150">
                       <div className="flex items-center gap-2">
-                        <span className="w-3 h-3 rounded bg-[#FF3333]"></span>
+                        <span className="w-3 h-3 rounded bg-[#FFFFFF]"></span>
                         <span className="text-white">Profit Day (Win)</span>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="w-3 h-3 rounded bg-[#601515] border border-[#FF3333]/40"></span>
-                        <span className="text-[#A3A3A3]">Loss Day</span>
+                        <span className="w-3 h-3 rounded bg-[#FF3333]"></span>
+                        <span className="text-[#FF3333]">Loss Day</span>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="w-3 h-3 rounded bg-[#333333]"></span>
+                        <span className="w-3 h-3 rounded bg-[#2D2D2D]"></span>
                         <span className="text-[#A3A3A3]">Break Even</span>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="w-3 h-3 rounded bg-[#181818] border border-[#282828]"></span>
+                        <span className="w-3 h-3 rounded bg-[#141414] border border-[#282828]"></span>
                         <span className="text-[#737373]">No Trades</span>
                       </div>
                     </div>
@@ -682,12 +682,12 @@ export default function Dashboard({
                     className={cn(
                       "aspect-square rounded-md p-1 flex flex-col justify-between text-center transition-all cursor-default relative group",
                       isWin 
-                        ? "bg-[#FF3333] text-white shadow-[0_0_8px_rgba(255,51,51,0.4)]" 
+                        ? "bg-[#FFFFFF] text-black font-extrabold shadow-[0_0_8px_rgba(255,255,255,0.35)]" 
                         : isLoss 
-                        ? "bg-[#551515] border border-[#FF3333]/40 text-[#FFAAAA]"
+                        ? "bg-[#FF3333] text-white font-bold shadow-[0_0_8px_rgba(255,51,51,0.35)]"
                         : isBE
-                        ? "bg-[#333333] text-[#A3A3A3]"
-                        : "bg-[#161616] border border-[#262626] text-[#555555]"
+                        ? "bg-[#2D2D2D] text-white"
+                        : "bg-[#141414] border border-[#222222] text-[#444444]"
                     )}
                   >
                     <span className="text-[9px] font-mono leading-none font-bold">

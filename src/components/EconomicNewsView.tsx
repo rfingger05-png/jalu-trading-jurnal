@@ -223,12 +223,11 @@ export default function EconomicNewsView() {
         </div>
 
         {/* ======================================================== */}
-        {/* Full 2-Column Side-by-Side Layout                        */}
-        {/* ======================================================== */}
+        {/* Full 2-Column Side-by-Side Layout */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
 
           {/* Left Column (5 Cols): Major Economic Event List */}
-          <div className="lg:col-span-5 bg-[#1A1A1A] rounded-xl border border-[#2D2D2D] p-4 space-y-3">
+          <div className="lg:col-span-5 bg-[#141414] rounded-2xl border border-[#262626] p-4 space-y-3">
             <div className="flex items-center justify-between pb-2.5 border-b border-[#262626]">
               <span className="text-xs font-mono uppercase tracking-wider text-white font-bold flex items-center gap-2">
                 <Layers size={13} className="text-[#FF3333]" />
@@ -305,7 +304,7 @@ export default function EconomicNewsView() {
           </div>
 
           {/* Right Column (7 Cols): Event Detail Panel & Live Countdown */}
-          <div className="lg:col-span-7 bg-[#1A1A1A] rounded-xl border border-[#2D2D2D] p-5 sm:p-6 space-y-6 sticky top-20 shadow-md">
+          <div className="lg:col-span-7 bg-[#141414] rounded-2xl border border-[#262626] p-5 sm:p-6 space-y-6 sticky top-20 shadow-md">
             {activeEvent ? (
               <>
                 {/* Event Title Header */}
