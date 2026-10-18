@@ -13,6 +13,10 @@ export function escapeHtml(text: any): string {
 
 const sendOrEdit = async (ctx: any, msg: string, useBackButton: boolean = false, customButtons?: any[]) => {
   try {
+    if (ctx.callbackQuery) {
+      ctx.answerCbQuery().catch(() => {});
+    }
+
     const extra: any = { parse_mode: 'HTML' };
     const rows: any[] = [];
     if (customButtons && customButtons.length > 0) {
@@ -26,12 +30,22 @@ const sendOrEdit = async (ctx: any, msg: string, useBackButton: boolean = false,
     }
 
     if (ctx.callbackQuery) {
-      await ctx.editMessageText(msg, extra).catch(() => ctx.reply(msg, extra));
+      await ctx.editMessageText(msg, extra).catch((err: any) => {
+        const errMsg = err?.description || err?.message || '';
+        // If content is not modified or query is obsolete, avoid duplicate messages
+        if (errMsg.includes('message is not modified') || errMsg.includes('query is too old')) {
+          return;
+        }
+        return ctx.reply(msg, extra).catch(() => {});
+      });
     } else {
       await ctx.reply(msg, extra);
     }
-  } catch (err) {
-    console.error("sendOrEdit error:", err);
+  } catch (err: any) {
+    const errMsg = err?.description || err?.message || '';
+    if (!errMsg.includes('message is not modified')) {
+      console.error("sendOrEdit error:", err);
+    }
   }
 };
 
@@ -490,14 +504,25 @@ export function initTelegramBot(db: any) {
   botStatus.configured = true;
   const bot = new Telegraf(token);
 
-  // Global update error handler - prevent polling crash
+  // Global middleware to always acknowledge callback queries immediately to prevent button hangs
+  bot.use(async (ctx, next) => {
+    if (ctx.callbackQuery) {
+      ctx.answerCbQuery().catch(() => {});
+    }
+    return next();
+  });
+
+  // Global update error handler - prevent polling crash & suppress benign telegram warnings
   bot.catch((err: any, ctx: any) => {
-    console.error(`Telegram Bot Error for ${ctx?.updateType || 'update'}:`, err?.message || err);
-    try {
-      if (ctx && ctx.reply) {
-        ctx.reply('⚠️ Terjadi sedikit kendala koneksi sistem. Silakan ulangi perintah Anda.');
-      }
-    } catch (_) {}
+    const errText = err?.description || err?.message || '';
+    if (
+      errText.includes('message is not modified') ||
+      errText.includes('query is too old') ||
+      errText.includes('message to edit not found')
+    ) {
+      return;
+    }
+    console.error(`Telegram Bot Error for ${ctx?.updateType || 'update'}:`, errText);
   });
 
   // Verify token with Telegram and initialize bot
@@ -510,6 +535,7 @@ export function initTelegramBot(db: any) {
     // Register clean, organized command list to Telegram's built-in command menu
     bot.telegram.setMyCommands([
       { command: 'menu', description: '📱 Buka Control Panel navigasi interaktif' },
+      { command: 'web', description: '🌐 Link akses Web Dashboard JURNALKU' },
       { command: 'today', description: '📊 Rekap performa & progres target hari ini' },
       { command: 'quick', description: '⚡ Catat 1 trade cepat: /quick [pair] [buy/sell] [lot] [pnl]' },
       { command: 'bulk', description: '🚀 Catat banyak trade sekaligus dalam 1 pesan' },
@@ -885,6 +911,7 @@ export function initTelegramBot(db: any) {
     const user = await getActiveUser(telegramId, ctx.from?.username);
 
     let welcome = `📊 <b>PRO TRADING JOURNAL BOT</b>\n` +
+                  `🌐 <b>Web:</b> <a href="https://jalu-trading-jurnal.vercel.app/">jalu-trading-jurnal.vercel.app</a>\n` +
                   `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
                   `Selamat datang di asisten pencatatan trading otomatis.\n\n`;
 
@@ -899,19 +926,21 @@ export function initTelegramBot(db: any) {
     }
 
     welcome += `📋 <b>Menu & Perintah Utama:</b>\n` +
-               `• <code>/jurnal</code> - 📝 Form interaktif input trade langkah demi langkah\n` +
+               `• <code>/web</code> - 🌐 Buka Web Dashboard resmi\n` +
+               `• <code>/bulk</code> - 🚀 Catat banyak trade sekaligus dalam 1 pesan\n` +
+               `• <code>/today</code> - 📊 Rekap performa hari ini + progress to goal\n` +
                `• <code>/quick</code> - ⚡ Catat trade 1 baris cepat\n` +
                `• <code>/buy</code> & <code>/sell</code> - 🟢🔴 Shortcut instan posisi Buy / Sell\n` +
+               `• <code>/jurnal</code> - 📝 Form interaktif input trade langkah demi langkah\n` +
                `• <code>/running</code> - ⏳ Lihat & tutup trade terbuka\n` +
                `• <code>/saldo</code> - 💰 Cek saldo, equity & drawdown\n` +
-               `• <code>/today</code> - 📊 Rekap performa hari ini\n` +
                `• <code>/menu</code> - 📱 Buka Control Panel tombol navigasi\n` +
                `• <code>/help</code> - 💡 Panduan format lengkap`;
 
     const buttons = [
-      [Markup.button.callback('📝 Jurnal Trade Baru', 'cmd_start_journal'), Markup.button.callback('💰 Cek Saldo', 'cmd_saldo')],
-      [Markup.button.callback('📊 Performa Hari Ini', 'cmd_today'), Markup.button.callback('🧮 Hitung Lot', 'cmd_lot')],
-      [Markup.button.callback('📱 Buka Menu Lengkap', 'cmd_menu')]
+      [Markup.button.callback('📝 Jurnal Trade Baru', 'cmd_start_journal'), Markup.button.callback('🚀 Jurnal Bulk', 'cmd_bulk_prompt')],
+      [Markup.button.callback('📊 Performa Hari Ini', 'cmd_today'), Markup.button.callback('💰 Cek Saldo', 'cmd_saldo')],
+      [Markup.button.url('🌐 Buka Web Dashboard', 'https://jalu-trading-jurnal.vercel.app/'), Markup.button.callback('📱 Buka Menu Lengkap', 'cmd_menu')]
     ];
 
     await ctx.reply(welcome, {
@@ -1994,13 +2023,14 @@ export function initTelegramBot(db: any) {
                   `• Net Realized P/L: <b>${signPL}${sym}${totalPL.toLocaleString('en-US', { minimumFractionDigits: 2 })}</b>\n` +
                   `────────────────────────────\n` +
                   `⚡ <b>CURRENT EQUITY:</b> <b>${sym}${s.currentEquity.toLocaleString('en-US', { minimumFractionDigits: 2 })}</b>\n` +
+                  `🌐 <b>Web:</b> <a href="https://jalu-trading-jurnal.vercel.app/">jalu-trading-jurnal.vercel.app</a>\n` +
                   `<i>💡 Ubah target goal dengan: <code>/setgoal [jumlah]</code></i>`;
 
       const buttons = [
         [Markup.button.callback('📊 Hari Ini', 'cmd_today'), Markup.button.callback('📈 7 Hari', 'cmd_weekly')],
         [Markup.button.callback('📝 Jurnal Baru', 'cmd_start_journal'), Markup.button.callback('🚀 Jurnal Bulk', 'cmd_bulk_prompt')],
         [Markup.button.callback('🎯 Atur Target (/setgoal)', 'cmd_setgoal'), Markup.button.callback('💰 Cek Saldo', 'cmd_saldo')],
-        [Markup.button.callback('📱 Menu Utama', 'cmd_menu')]
+        [Markup.button.url('🌐 Buka Web Dashboard', 'https://jalu-trading-jurnal.vercel.app/'), Markup.button.callback('📱 Menu Utama', 'cmd_menu')]
       ];
 
       await sendOrEdit(ctx, msg, false, buttons);
@@ -3068,12 +3098,41 @@ export function initTelegramBot(db: any) {
     }
   });
 
+  // WEB DASHBOARD COMMAND (/web, /dashboard, /linkweb, /app)
+  const handleWebLink = async (ctx: any) => {
+    if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
+    const msg =
+      `🌐 <b>JURNALKU WEB DASHBOARD</b>\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `Akses seluruh fitur jurnal trading profesional Anda langsung melalui web browser:\n\n` +
+      `🔗 <b>URL Dashboard:</b>\n` +
+      `<a href="https://jalu-trading-jurnal.vercel.app/">https://jalu-trading-jurnal.vercel.app/</a>\n\n` +
+      `✨ <b>Fitur Lengkap di Web:</b>\n` +
+      `• 📊 Quick Trade Lot Calculator (Standard, Cent, Neon)\n` +
+      `• 📜 Trade History Terperinci dengan Filter Sesi Pasar\n` +
+      `• 🖼️ Gallery Candlestick Before & After Grid (3-Col)\n` +
+      `• 🧮 Lot Auto-Calculator & 10-Day MM Compounding\n` +
+      `• 📰 Kalender Berita Ekonomi Tier-1 XAUUSD (Live Timer)\n` +
+      `• 📈 Weekly Review & Matriks Konsistensi 30 Hari\n\n` +
+      `<i>Seluruh data transaksi tersinkronisasi instan & realtime antara Bot Telegram & Web!</i>`;
+
+    const webKeyboard = [
+      [Markup.button.url('🚀 Buka Web Dashboard Sekarang', 'https://jalu-trading-jurnal.vercel.app/')],
+      [Markup.button.callback('📱 Kembali ke Menu', 'cmd_menu')]
+    ];
+    await sendOrEdit(ctx, msg, false, webKeyboard);
+  };
+  bot.command(['web', 'dashboard', 'linkweb', 'app'], handleWebLink);
+  bot.action('cmd_web', handleWebLink);
+
   // CONTROL PANEL MENU (/menu)
   const renderMenu = async (ctx: any) => {
+    if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
     const telegramId = ctx.from?.id?.toString();
     const user = await getActiveUser(telegramId, ctx.from?.username);
 
     let msg = `📱 <b>CONTROL PANEL TRADING</b>\n` +
+              `🌐 <b>Web:</b> <a href="https://jalu-trading-jurnal.vercel.app/">jalu-trading-jurnal.vercel.app</a>\n` +
               `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
 
     if (user) {
@@ -3104,11 +3163,15 @@ export function initTelegramBot(db: any) {
       [Markup.button.callback('📰 Berita Pasar (News)', 'cmd_news'), Markup.button.callback('🛡️ Set Risiko %', 'cmd_setrisk_menu')],
       [Markup.button.callback('💵 Set Modal Awal', 'cmd_setmodal'), Markup.button.callback('🏷️ Ganti Tipe Akun', 'cmd_setaccount')],
       [Markup.button.callback('👥 Kelola Akun', 'cmd_accounts'), Markup.button.callback('⚠️ Reset Data Akun', 'cmd_reset')],
-      [Markup.button.callback('💡 Bantuan & Panduan Lengkap', 'cmd_help')]
+      [Markup.button.url('🌐 Buka Web Dashboard', 'https://jalu-trading-jurnal.vercel.app/'), Markup.button.callback('💡 Bantuan', 'cmd_help')]
     ]);
 
     if (ctx.callbackQuery) {
-      await ctx.editMessageText(msg, { parse_mode: 'HTML', ...keyboard }).catch(() => ctx.reply(msg, { parse_mode: 'HTML', ...keyboard }));
+      await ctx.editMessageText(msg, { parse_mode: 'HTML', ...keyboard }).catch((err: any) => {
+        if (!err?.message?.includes('not modified')) {
+          return ctx.reply(msg, { parse_mode: 'HTML', ...keyboard });
+        }
+      });
     } else {
       await ctx.reply(msg, { parse_mode: 'HTML', ...keyboard });
     }
@@ -3155,6 +3218,7 @@ export function initTelegramBot(db: any) {
                     `• <code>/deposit [jumlah]</code> — Catat penambahan deposit saldo\n` +
                     `• <code>/wd [jumlah]</code> — Catat penarikan keuntungan (withdrawal)\n\n` +
                     `📰 <b>5. INFORMASI & MULTI-AKUN</b>\n` +
+                    `• <code>/web</code> — Link akses Web Dashboard (<a href="https://jalu-trading-jurnal.vercel.app/">jalu-trading-jurnal.vercel.app</a>)\n` +
                     `• <code>/news</code> — Kalender berita ekonomi Forex & rilis High-Impact XAUUSD\n` +
                     `• <code>/menu</code> — Buka Control Panel tombol navigasi utama\n` +
                     `• <code>/accounts</code> — Daftar akun trading yang terhubung\n` +
