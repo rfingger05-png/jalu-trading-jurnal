@@ -297,7 +297,7 @@ export default function AnalyticsView({
                   : "text-[#A3A3A3] hover:text-white"
               )}
             >
-              Minggu Ini ({format(currentWeekStart, 'dd/MM')})
+              Minggu Ini
             </button>
             <button
               onClick={() => setSelectedWeek('previous')}
@@ -308,7 +308,7 @@ export default function AnalyticsView({
                   : "text-[#A3A3A3] hover:text-white"
               )}
             >
-              Minggu Lalu ({format(prevWeekStart, 'dd/MM')})
+              Minggu Lalu
             </button>
           </div>
         </div>
@@ -334,8 +334,9 @@ export default function AnalyticsView({
               )}>
                 {weekKPI.netPL >= 0 ? '+' : ''}{formatCurrency(weekKPI.netPL, user?.currency)}
               </div>
-              <div className="text-[11px] font-mono text-[#A3A3A3] mt-2">
-                Periode: {format(activeStart, 'dd MMM')} – {format(activeEnd, 'dd MMM')}
+              <div className="text-[11px] font-mono text-[#A3A3A3] mt-2 flex items-center gap-1">
+                <span>Kalender:</span>
+                <strong className="text-white">{format(activeStart, 'dd MMM')} – {format(activeEnd, 'dd MMM yyyy')}</strong>
               </div>
             </div>
           </div>
@@ -350,10 +351,10 @@ export default function AnalyticsView({
             </div>
             <div>
               <div className="text-2xl sm:text-3xl font-black font-mono tracking-tight text-white tabular-nums">
-                {weekKPI.total > 0 ? `${weekKPI.winRate}%` : '--'}
+                {weekKPI.total > 0 ? `${weekKPI.winRate}%` : '0%'}
               </div>
               <div className="text-[11px] font-mono text-[#A3A3A3] mt-2">
-                {weekKPI.wins} Menang · {weekKPI.losses} Kalah
+                {weekKPI.total > 0 ? `${weekKPI.wins} Menang · ${weekKPI.losses} Kalah` : '0 Menang · 0 Kalah (Data Bersih)'}
               </div>
             </div>
           </div>

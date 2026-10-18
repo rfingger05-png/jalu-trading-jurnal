@@ -304,7 +304,10 @@ export default function TradeGallery({ trades, user, onTradeUpdated, onOpenLogTr
                     const isWin = (trade.result || '').toLowerCase() === 'win';
                     const isLoss = (trade.result || '').toLowerCase() === 'loss';
                     const isBuy = (trade.direction || '').toLowerCase() === 'buy';
-                    const imgSrc = trade.image || trade.image_url;
+                    const imgBefore = trade.image_before || trade.image || trade.image_url;
+                    const imgAfter = trade.image_after;
+                    const isTvBefore = Boolean(imgBefore && imgBefore.includes('tradingview.com'));
+                    const isTvAfter = Boolean(imgAfter && imgAfter.includes('tradingview.com'));
                     const sessInfo = detectTradingSession(trade.trade_time || trade.created_at);
 
                     return (
@@ -315,41 +318,63 @@ export default function TradeGallery({ trades, user, onTradeUpdated, onOpenLogTr
                         {/* Candlestick / Chart Graphic Split in Two: BEFORE (kiri) & AFTER (kanan) */}
                         <div className="relative aspect-16/10 bg-[#0A0A0A] border-b border-[#262626] overflow-hidden">
                           
-                          {imgSrc ? (
-                            // When user uploaded image: split comparison or full with dual indicators
-                            <div className="relative w-full h-full flex">
-                              <div className="w-1/2 h-full border-r border-[#262626] relative overflow-hidden bg-black/60">
-                                <span className="absolute top-2 left-2 text-[9px] font-mono font-black uppercase px-1.5 py-0.5 rounded bg-[#FF3333]/30 text-[#FF3333] border border-[#FF3333]/50 z-10">
-                                  BEFORE
-                                </span>
+                          <div className="relative w-full h-full flex">
+                            {/* Left Half: BEFORE (Entry Setup) */}
+                            <div className="w-1/2 h-full border-r border-[#262626] relative overflow-hidden bg-black/60">
+                              <span className="absolute top-2 left-2 text-[9px] font-mono font-black uppercase px-1.5 py-0.5 rounded bg-[#FF3333]/30 text-[#FF3333] border border-[#FF3333]/50 z-10">
+                                BEFORE
+                              </span>
+                              {isTvBefore && (
+                                <a
+                                  href={imgBefore || '#'}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="absolute bottom-6 left-2 text-[8px] font-mono font-bold uppercase px-1.5 py-0.2 rounded bg-black/80 hover:bg-[#FF3333] text-white border border-[#333333] z-10 transition-colors"
+                                  title="Buka chart asli di TradingView"
+                                >
+                                  TV ↗
+                                </a>
+                              )}
+                              {imgBefore ? (
                                 <img
-                                  src={formatImageUrl(imgSrc)}
+                                  src={formatImageUrl(imgBefore)}
                                   alt="Chart Before"
-                                  className="w-full h-full object-cover object-left opacity-90 group-hover:scale-105 transition-transform duration-300"
+                                  className="w-full h-full object-cover opacity-90 group-hover:scale-105 transition-transform duration-300"
                                 />
-                              </div>
-                              <div className="w-1/2 h-full relative overflow-hidden bg-black/60">
-                                <span className="absolute top-2 left-2 text-[9px] font-mono font-black uppercase px-1.5 py-0.5 rounded bg-[#181818] text-white border border-[#333333] z-10">
-                                  AFTER
-                                </span>
-                                <img
-                                  src={formatImageUrl(imgSrc)}
-                                  alt="Chart After"
-                                  className="w-full h-full object-cover object-right opacity-90 group-hover:scale-105 transition-transform duration-300"
-                                />
-                              </div>
-                            </div>
-                          ) : (
-                            // Pure Candlestick Split View: Before on Left, After on Right
-                            <div className="w-full h-full flex">
-                              <div className="w-1/2 h-full border-r border-[#262626]">
+                              ) : (
                                 <CandlestickPreview trade={trade} isAfter={false} />
-                              </div>
-                              <div className="w-1/2 h-full">
-                                <CandlestickPreview trade={trade} isAfter={true} />
-                              </div>
+                              )}
                             </div>
-                          )}
+
+                            {/* Right Half: AFTER (Outcome) */}
+                            <div className="w-1/2 h-full relative overflow-hidden bg-black/60">
+                              <span className="absolute top-2 left-2 text-[9px] font-mono font-black uppercase px-1.5 py-0.5 rounded bg-[#181818] text-white border border-[#333333] z-10">
+                                AFTER
+                              </span>
+                              {isTvAfter && (
+                                <a
+                                  href={imgAfter || '#'}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="absolute bottom-6 left-2 text-[8px] font-mono font-bold uppercase px-1.5 py-0.2 rounded bg-black/80 hover:bg-[#FF3333] text-white border border-[#333333] z-10 transition-colors"
+                                  title="Buka chart asli di TradingView"
+                                >
+                                  TV ↗
+                                </a>
+                              )}
+                              {imgAfter ? (
+                                <img
+                                  src={formatImageUrl(imgAfter)}
+                                  alt="Chart After"
+                                  className="w-full h-full object-cover opacity-90 group-hover:scale-105 transition-transform duration-300"
+                                />
+                              ) : (
+                                <CandlestickPreview trade={trade} isAfter={true} />
+                              )}
+                            </div>
+                          </div>
 
                           {/* Lightbox / Fullscreen Trigger Button */}
                           <button
@@ -509,38 +534,110 @@ export default function TradeGallery({ trades, user, onTradeUpdated, onOpenLogTr
             </div>
 
             {/* Main Visual Display */}
-            <div className="w-full h-80 sm:h-96 bg-[#0A0A0A] rounded-xl border border-[#262626] overflow-hidden relative">
-              {lightboxTrade.image || lightboxTrade.image_url ? (
-                <img
-                  src={formatImageUrl(lightboxTrade.image || lightboxTrade.image_url)}
-                  alt="Full Chart"
-                  className="w-full h-full object-contain"
-                />
-              ) : (
-                <div className="w-full h-full flex">
+            {(() => {
+              const lbBefore = lightboxTrade.image_before || lightboxTrade.image || lightboxTrade.image_url;
+              const lbAfter = lightboxTrade.image_after;
+              const isTvBefore = Boolean(lbBefore && lbBefore.includes('tradingview.com'));
+              const isTvAfter = Boolean(lbAfter && lbAfter.includes('tradingview.com'));
+
+              return (
+                <div className="w-full h-80 sm:h-110 bg-[#0A0A0A] rounded-xl border border-[#262626] overflow-hidden relative">
                   {activeViewMode === 'split' && (
-                    <>
-                      <div className="w-1/2 h-full border-r border-[#262626]">
-                        <CandlestickPreview trade={lightboxTrade} isAfter={false} />
+                    <div className="w-full h-full flex">
+                      {/* Before (Left) */}
+                      <div className="w-1/2 h-full border-r border-[#262626] relative bg-black/60 flex items-center justify-center">
+                        <span className="absolute top-2 left-2 text-[9px] font-mono font-black uppercase px-2 py-0.5 rounded bg-[#FF3333]/30 text-[#FF3333] border border-[#FF3333]/50 z-10">
+                          BEFORE (ENTRY)
+                        </span>
+                        {isTvBefore && (
+                          <a
+                            href={lbBefore || '#'}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="absolute top-2 right-2 text-[10px] font-mono font-bold uppercase px-2 py-0.5 rounded bg-black/80 hover:bg-[#FF3333] text-white border border-[#333333] z-10"
+                          >
+                            TradingView ↗
+                          </a>
+                        )}
+                        {lbBefore ? (
+                          <img src={formatImageUrl(lbBefore)} alt="Before Chart" className="w-full h-full object-contain" />
+                        ) : (
+                          <CandlestickPreview trade={lightboxTrade} isAfter={false} />
+                        )}
                       </div>
-                      <div className="w-1/2 h-full">
-                        <CandlestickPreview trade={lightboxTrade} isAfter={true} />
+
+                      {/* After (Right) */}
+                      <div className="w-1/2 h-full relative bg-black/60 flex items-center justify-center">
+                        <span className="absolute top-2 left-2 text-[9px] font-mono font-black uppercase px-2 py-0.5 rounded bg-[#181818] text-white border border-[#333333] z-10">
+                          AFTER (OUTCOME)
+                        </span>
+                        {isTvAfter && (
+                          <a
+                            href={lbAfter || '#'}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="absolute top-2 right-2 text-[10px] font-mono font-bold uppercase px-2 py-0.5 rounded bg-black/80 hover:bg-[#FF3333] text-white border border-[#333333] z-10"
+                          >
+                            TradingView ↗
+                          </a>
+                        )}
+                        {lbAfter ? (
+                          <img src={formatImageUrl(lbAfter)} alt="After Chart" className="w-full h-full object-contain" />
+                        ) : (
+                          <CandlestickPreview trade={lightboxTrade} isAfter={true} />
+                        )}
                       </div>
-                    </>
-                  )}
-                  {activeViewMode === 'before' && (
-                    <div className="w-full h-full">
-                      <CandlestickPreview trade={lightboxTrade} isAfter={false} />
                     </div>
                   )}
+
+                  {activeViewMode === 'before' && (
+                    <div className="w-full h-full relative flex items-center justify-center bg-black">
+                      <span className="absolute top-3 left-3 text-[10px] font-mono font-black uppercase px-2 py-0.5 rounded bg-[#FF3333]/30 text-[#FF3333] border border-[#FF3333]/50 z-10">
+                        BEFORE (ENTRY SETUP)
+                      </span>
+                      {isTvBefore && (
+                        <a
+                          href={lbBefore || '#'}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="absolute top-3 right-3 text-[10px] font-mono font-bold uppercase px-2.5 py-1 rounded bg-black/80 hover:bg-[#FF3333] text-white border border-[#333333] z-10"
+                        >
+                          Buka di TradingView ↗
+                        </a>
+                      )}
+                      {lbBefore ? (
+                        <img src={formatImageUrl(lbBefore)} alt="Before Chart" className="w-full h-full object-contain" />
+                      ) : (
+                        <CandlestickPreview trade={lightboxTrade} isAfter={false} />
+                      )}
+                    </div>
+                  )}
+
                   {activeViewMode === 'after' && (
-                    <div className="w-full h-full">
-                      <CandlestickPreview trade={lightboxTrade} isAfter={true} />
+                    <div className="w-full h-full relative flex items-center justify-center bg-black">
+                      <span className="absolute top-3 left-3 text-[10px] font-mono font-black uppercase px-2 py-0.5 rounded bg-[#181818] text-white border border-[#333333] z-10">
+                        AFTER (OUTCOME RESULT)
+                      </span>
+                      {isTvAfter && (
+                        <a
+                          href={lbAfter || '#'}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="absolute top-3 right-3 text-[10px] font-mono font-bold uppercase px-2.5 py-1 rounded bg-black/80 hover:bg-[#FF3333] text-white border border-[#333333] z-10"
+                        >
+                          Buka di TradingView ↗
+                        </a>
+                      )}
+                      {lbAfter ? (
+                        <img src={formatImageUrl(lbAfter)} alt="After Chart" className="w-full h-full object-contain" />
+                      ) : (
+                        <CandlestickPreview trade={lightboxTrade} isAfter={true} />
+                      )}
                     </div>
                   )}
                 </div>
-              )}
-            </div>
+              );
+            })()}
 
             {/* Parameters & Psychology Note */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3 bg-[#0D0D0D] rounded-xl border border-[#262626]">

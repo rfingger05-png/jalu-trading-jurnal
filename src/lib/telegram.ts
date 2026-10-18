@@ -274,10 +274,27 @@ export function getWibTimeAndSession(customTime?: string) {
   return { timeStr, sessionName, sessionDisplay, sessionBadge, timeRange };
 }
 
-// Interactive Journaling Session per Telegram ID
+// Helper to normalize TradingView share links to direct snapshot images
+export function normalizeTradingViewUrl(url: string): string {
+  if (!url) return '';
+  const trimmed = url.trim();
+  if (trimmed.includes('tradingview.com/x/')) {
+    const parts = trimmed.split('/x/');
+    if (parts[1]) {
+      const id = parts[1].replace(/[^a-zA-Z0-9]/g, '');
+      if (id.length > 0) {
+        const firstChar = id.charAt(0).toLowerCase();
+        return `https://s3.tradingview.com/snapshots/${firstChar}/${id}.png`;
+      }
+    }
+  }
+  return trimmed;
+}
+
+// Interactive Journaling Session per Telegram ID (Step-by-Step 1 per 1)
 interface JournalSession {
-  step: 'pair' | 'direction' | 'lot' | 'entry' | 'sltp' | 'result' | 'pnl' | 'setup' | 'image';
-  pair?: string;
+  step: 'direction' | 'lot' | 'entry' | 'result' | 'pnl' | 'time' | 'image_before' | 'image_after' | 'notes';
+  pair: string;
   direction?: 'BUY' | 'SELL';
   lot?: number;
   entry?: number;
@@ -285,10 +302,13 @@ interface JournalSession {
   tp?: number;
   result?: 'WIN' | 'LOSS' | 'BE' | 'Pending';
   pnl?: number;
-  setup?: string;
-  image?: string;
+  setup: string;
   trade_time?: string;
   session?: string;
+  image_before?: string;
+  image_after?: string;
+  image?: string;
+  notes?: string;
   timestamp: number;
 }
 const journalSessions = new Map<string, JournalSession>();
@@ -950,8 +970,9 @@ export function initTelegramBot(db: any) {
   };
   bot.start(handleStart);
 
-  // INTERACTIVE JOURNAL WIZARD
+  // INTERACTIVE JOURNAL WIZARD (Step-by-Step 1 per 1, Auto Pair XAUUSD & Setup Pribadi)
   const startJournalWizard = async (ctx: any) => {
+    if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
     const telegramId = ctx.from?.id?.toString();
     const user = await getActiveUser(telegramId, ctx.from?.username);
     if (!user) {
@@ -959,59 +980,36 @@ export function initTelegramBot(db: any) {
     }
 
     journalSessions.set(telegramId, {
-      step: 'pair',
+      pair: 'XAUUSD',
+      setup: 'Setup Pribadi',
+      step: 'direction',
       timestamp: Date.now()
     });
 
-    const msg = `📝 <b>JURNAL TRADE BARU (Langkah 1/6)</b>\n` +
+    const msg = `📝 <b>JURNAL TRADE XAUUSD (Langkah 1/7 - Arah Posisi)</b>\n` +
                 `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                `👤 Akun: <code>${user.username}</code>\n\n` +
-                `Pilih instrumen / pair yang Anda tradingkan, atau ketik langsung di chat (cth: <i>EURUSD</i>):`;
+                `👤 Akun: <code>${user.username}</code>\n` +
+                `📈 Pair: <b>XAUUSD (Gold)</b> <i>(Otomatis)</i>\n` +
+                `🎯 Setup: <b>Setup Pribadi</b> <i>(Otomatis)</i>\n\n` +
+                `Pilih arah posisi trade Anda:`;
 
-    const pairKeyboard = [
-      [Markup.button.callback('🟡 XAUUSD (Gold)', 'jp_XAUUSD'), Markup.button.callback('🪙 BTCUSD', 'jp_BTCUSD')],
-      [Markup.button.callback('🇪🇺 EURUSD', 'jp_EURUSD'), Markup.button.callback('🇬🇧 GBPUSD', 'jp_GBPUSD')],
-      [Markup.button.callback('🇯🇵 USDJPY', 'jp_USDJPY'), Markup.button.callback('🇦🇺 AUDUSD', 'jp_AUDUSD')],
+    const dirKeyboard = [
+      [Markup.button.callback('🟢 BUY (Long)', 'jd_BUY'), Markup.button.callback('🔴 SELL (Short)', 'jd_SELL')],
       [Markup.button.callback('❌ Batalkan Jurnal', 'cmd_cancel_journal')]
     ];
 
     if (ctx.callbackQuery) {
-      await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: pairKeyboard } }).catch(() => ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: pairKeyboard } }));
+      await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: dirKeyboard } }).catch(() => ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: dirKeyboard } }));
     } else {
-      await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: pairKeyboard } });
+      await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: dirKeyboard } });
     }
   };
   bot.command(['jurnal', 'journal', 'trade', 'catat', 'input'], startJournalWizard);
   bot.action('cmd_start_journal', startJournalWizard);
 
-  // Wizard Action: Pair chosen
-  bot.action(/jp_(.+)/, async (ctx) => {
-    const pair = ctx.match[1];
-    const telegramId = ctx.from?.id?.toString();
-    const session = journalSessions.get(telegramId);
-    if (!session) {
-      return ctx.reply('Sesi jurnal telah berakhir. Ketik /jurnal untuk mulai baru.');
-    }
-
-    session.pair = pair;
-    session.step = 'direction';
-    session.timestamp = Date.now();
-
-    const msg = `📝 <b>JURNAL TRADE (Langkah 2/6)</b>\n` +
-                `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                `📈 Pair: <b>${pair}</b>\n\n` +
-                `Pilih arah posisi trade:`;
-
-    const dirKeyboard = [
-      [Markup.button.callback('🟢 BUY (Long)', 'jd_BUY'), Markup.button.callback('🔴 SELL (Short)', 'jd_SELL')],
-      [Markup.button.callback('❌ Batalkan', 'cmd_cancel_journal')]
-    ];
-
-    await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: dirKeyboard } }).catch(() => ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: dirKeyboard } }));
-  });
-
   // Wizard Action: Direction chosen
   bot.action(/jd_(BUY|SELL)/, async (ctx) => {
+    if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
     const direction = ctx.match[1] as 'BUY' | 'SELL';
     const telegramId = ctx.from?.id?.toString();
     const session = journalSessions.get(telegramId);
@@ -1022,10 +1020,10 @@ export function initTelegramBot(db: any) {
     session.timestamp = Date.now();
 
     const dirBadge = direction === 'BUY' ? '🟢 BUY' : '🔴 SELL';
-    const msg = `📝 <b>JURNAL TRADE (Langkah 3/6)</b>\n` +
+    const msg = `📝 <b>JURNAL TRADE XAUUSD (Langkah 2/7 - Ukuran Lot)</b>\n` +
                 `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                `📈 Pair: <b>${session.pair}</b> (${dirBadge})\n\n` +
-                `Pilih atau ketik ukuran Lot posisi (cth: <i>0.05</i>):`;
+                `📈 <b>XAUUSD</b> (${dirBadge}) | 🎯 <b>Setup Pribadi</b>\n\n` +
+                `Pilih tombol lot atau ketik angka lot di chat (cth: <i>0.05</i>):`;
 
     const lotKeyboard = [
       [Markup.button.callback('0.01 Lot', 'jl_0.01'), Markup.button.callback('0.05 Lot', 'jl_0.05'), Markup.button.callback('0.10 Lot', 'jl_0.10')],
@@ -1038,6 +1036,7 @@ export function initTelegramBot(db: any) {
 
   // Wizard Action: Lot chosen
   bot.action(/jl_([0-9.]+)/, async (ctx) => {
+    if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
     const lot = parseFloat(ctx.match[1]);
     const telegramId = ctx.from?.id?.toString();
     const session = journalSessions.get(telegramId);
@@ -1048,10 +1047,10 @@ export function initTelegramBot(db: any) {
     session.timestamp = Date.now();
 
     const dirBadge = session.direction === 'BUY' ? '🟢 BUY' : '🔴 SELL';
-    const msg = `📝 <b>JURNAL TRADE (Langkah 4/6)</b>\n` +
+    const msg = `📝 <b>JURNAL TRADE XAUUSD (Langkah 3/7 - Harga Entry)</b>\n` +
                 `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                `📈 Pair: <b>${session.pair}</b> (${dirBadge}) | Lot: <b>${lot}</b>\n\n` +
-                `Ketik harga <b>Entry</b> Anda di chat (cth: <code>2650.50</code>)\n` +
+                `📈 <b>XAUUSD</b> (${dirBadge}) | Lot: <b>${lot}</b>\n\n` +
+                `Ketik harga <b>Entry</b> Anda di chat (cth: <code>2650.50</code>):\n` +
                 `<i>Atau klik tombol lewati jika tidak ingin mencatat harga entry.</i>`;
 
     const skipKeyboard = [
@@ -1064,6 +1063,7 @@ export function initTelegramBot(db: any) {
 
   // Wizard Action: Skip Entry
   bot.action('js_skip_entry', async (ctx) => {
+    if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
     const telegramId = ctx.from?.id?.toString();
     const session = journalSessions.get(telegramId);
     if (!session) return ctx.reply('Sesi jurnal telah berakhir. Ketik /jurnal.');
@@ -1072,9 +1072,9 @@ export function initTelegramBot(db: any) {
     session.step = 'result';
     session.timestamp = Date.now();
 
-    const msg = `📝 <b>JURNAL TRADE (Langkah 5/6)</b>\n` +
+    const msg = `📝 <b>JURNAL TRADE XAUUSD (Langkah 4/7 - Status Hasil)</b>\n` +
                 `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                `📈 Pair: <b>${session.pair}</b> (${session.direction}) | Lot: <b>${session.lot}</b>\n\n` +
+                `📈 <b>XAUUSD</b> (${session.direction}) | Lot: <b>${session.lot}</b>\n\n` +
                 `Pilih status hasil dari trade ini:`;
 
     const resKeyboard = [
@@ -1088,6 +1088,7 @@ export function initTelegramBot(db: any) {
 
   // Wizard Action: Result status chosen
   bot.action(/jr_(WIN|LOSS|BE|PENDING)/, async (ctx) => {
+    if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
     const res = ctx.match[1];
     const telegramId = ctx.from?.id?.toString();
     const session = journalSessions.get(telegramId);
@@ -1096,21 +1097,14 @@ export function initTelegramBot(db: any) {
     session.result = res === 'PENDING' ? 'Pending' : (res as any);
     session.timestamp = Date.now();
 
-    if (res === 'BE') {
+    if (res === 'BE' || res === 'PENDING') {
       session.pnl = 0;
-      session.step = 'setup';
-      return promptSetupStep(ctx, session);
-    }
-
-    if (res === 'PENDING') {
-      session.pnl = 0;
-      session.step = 'setup';
-      return promptSetupStep(ctx, session);
+      return promptTimeStep(ctx, session);
     }
 
     session.step = 'pnl';
     const isWin = res === 'WIN';
-    const msg = `📝 <b>JURNAL TRADE (Langkah 6/6 - Profit/Loss)</b>\n` +
+    const msg = `📝 <b>JURNAL TRADE XAUUSD (Langkah 5/7 - Realized P/L)</b>\n` +
                 `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
                 `Status: ${isWin ? '🏆 <b>WIN (Profit)</b>' : '❌ <b>LOSS (Rugi)</b>'}\n\n` +
                 `Ketik nominal Realized P/L dalam USD ($):\n` +
@@ -1120,37 +1114,54 @@ export function initTelegramBot(db: any) {
     await ctx.editMessageText(msg, { parse_mode: 'HTML' }).catch(() => ctx.reply(msg, { parse_mode: 'HTML' }));
   });
 
-  // Helper prompt for Setup step
-  const promptSetupStep = async (ctx: any, session: JournalSession) => {
-    const msg = `🎯 <b>PILIH STRATEGI / SETUP TRADE</b>\n` +
-                `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                `Pilih setup atau ketik catatan strategi Anda di chat:`;
+  // Step 6: Execution Time Step (WIB Time & Market Session)
+  const promptTimeStep = async (ctx: any, session: JournalSession) => {
+    session.step = 'time';
+    session.timestamp = Date.now();
 
-    const setupKeyboard = [
-      [Markup.button.callback('Breakout H4/H1', 'jsu_Breakout'), Markup.button.callback('FVG / ICT Concept', 'jsu_FVG')],
-      [Markup.button.callback('Support & Resistance', 'jsu_SnR'), Markup.button.callback('Trend Following', 'jsu_Trend')],
-      [Markup.button.callback('⏩ Tanpa Setup (Lanjut)', 'jsu_General')]
+    const nowWib = getWibTimeAndSession();
+    const msg = `⏰ <b>WAKTU / JAM EKSEKUSI TRADE (Langkah 6/9)</b>\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `🕒 Waktu saat ini: <b>${nowWib.timeStr} WIB</b> (${nowWib.sessionName})\n\n` +
+                `Pilih tombol di bawah untuk menggunakan jam sekarang, atau ketik jam manual di chat (format <i>HH:mm</i>, cth: <code>14:30</code>):`;
+
+    const timeKeyboard = [
+      [Markup.button.callback(`⏰ Gunakan Jam Sekarang (${nowWib.timeStr} WIB)`, 'js_time_now')],
+      [Markup.button.callback('❌ Batalkan Jurnal', 'cmd_cancel_journal')]
     ];
 
     if (ctx.callbackQuery) {
-      await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: setupKeyboard } }).catch(() => ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: setupKeyboard } }));
+      await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: timeKeyboard } }).catch(() => ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: timeKeyboard } }));
     } else {
-      await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: setupKeyboard } });
+      await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: timeKeyboard } });
     }
   };
 
-  // Helper prompt for Image step
-  const promptImageStep = async (ctx: any, session: JournalSession) => {
-    session.step = 'image';
+  bot.action('js_time_now', async (ctx) => {
+    if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
+    const telegramId = ctx.from?.id?.toString();
+    const session = journalSessions.get(telegramId);
+    if (!session) return ctx.reply('Sesi jurnal telah berakhir. Ketik /jurnal.');
+
+    const sess = getWibTimeAndSession();
+    session.trade_time = sess.timeStr;
+    session.session = sess.sessionName;
+    return promptBeforeImageStep(ctx, session);
+  });
+
+  // Step 7: Chart Before Step (Photo Upload OR TradingView URL)
+  const promptBeforeImageStep = async (ctx: any, session: JournalSession) => {
+    session.step = 'image_before';
     session.timestamp = Date.now();
 
-    const msg = `📸 <b>LAMPIRKAN SCREENSHOT CHART (Opsional)</b>\n` +
+    const msg = `📸 <b>CHART BEFORE - Analisis Sebelum Entry (Langkah 7/9)</b>\n` +
                 `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                `Kirim foto atau screenshot chart entry Anda sekarang di chat.\n\n` +
-                `<i>Atau klik tombol di bawah jika tidak ingin melampirkan gambar.</i>`;
+                `Kirim <b>Foto Screenshot</b> analisa sebelum entry langsung di chat\n` +
+                `<b>ATAU</b> tempelkan <b>Link TradingView</b> (cth: <code>https://www.tradingview.com/x/...</code>)\n\n` +
+                `<i>Atau klik tombol lewati jika tidak ingin melampirkan chart before:</i>`;
 
     const imgKeyboard = [
-      [Markup.button.callback('⏩ Simpan Tanpa Gambar', 'js_skip_image')],
+      [Markup.button.callback('⏩ Lewati Foto Before', 'js_skip_before')],
       [Markup.button.callback('❌ Batalkan Jurnal', 'cmd_cancel_journal')]
     ];
 
@@ -1161,23 +1172,72 @@ export function initTelegramBot(db: any) {
     }
   };
 
-  // Wizard Action: Setup chosen -> Next to image or save
-  bot.action(/jsu_(.+)/, async (ctx) => {
-    const setup = ctx.match[1];
+  bot.action('js_skip_before', async (ctx) => {
+    if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
     const telegramId = ctx.from?.id?.toString();
     const session = journalSessions.get(telegramId);
     if (!session) return ctx.reply('Sesi jurnal telah berakhir. Ketik /jurnal.');
-
-    session.setup = setup === 'General' ? 'Standard Setup' : setup;
-    if (session.image) {
-      await completeInteractiveJournal(ctx, telegramId, session);
-    } else {
-      await promptImageStep(ctx, session);
-    }
+    session.image_before = '';
+    return promptAfterImageStep(ctx, session);
   });
 
-  // Wizard Action: Skip image -> Save trade
-  bot.action('js_skip_image', async (ctx) => {
+  // Step 8: Chart After Step (Photo Upload OR TradingView URL)
+  const promptAfterImageStep = async (ctx: any, session: JournalSession) => {
+    session.step = 'image_after';
+    session.timestamp = Date.now();
+
+    const msg = `📸 <b>CHART AFTER - Hasil Sesudah Selesai (Langkah 8/9)</b>\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `Kirim <b>Foto Screenshot</b> hasil trade langsung di chat\n` +
+                `<b>ATAU</b> tempelkan <b>Link TradingView</b> (cth: <code>https://www.tradingview.com/x/...</code>)\n\n` +
+                `<i>Atau klik tombol lewati jika tidak ingin melampirkan chart after:</i>`;
+
+    const imgKeyboard = [
+      [Markup.button.callback('⏩ Lewati Foto After', 'js_skip_after')],
+      [Markup.button.callback('❌ Batalkan Jurnal', 'cmd_cancel_journal')]
+    ];
+
+    if (ctx.callbackQuery) {
+      await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: imgKeyboard } }).catch(() => ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: imgKeyboard } }));
+    } else {
+      await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: imgKeyboard } });
+    }
+  };
+
+  bot.action('js_skip_after', async (ctx) => {
+    if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
+    const telegramId = ctx.from?.id?.toString();
+    const session = journalSessions.get(telegramId);
+    if (!session) return ctx.reply('Sesi jurnal telah berakhir. Ketik /jurnal.');
+    session.image_after = '';
+    return promptNotesStep(ctx, session);
+  });
+
+  // Step 9: Trade Reason / Psychology Notes Step (Optional)
+  const promptNotesStep = async (ctx: any, session: JournalSession) => {
+    session.step = 'notes';
+    session.timestamp = Date.now();
+
+    const msg = `📝 <b>ALASAN / CATATAN TRADE (Langkah 9/9 - Opsional)</b>\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `Ketik alasan entry atau catatan psikologi trading Anda di chat\n` +
+                `(cth: <i>Reject SnR H4 + Konfirmasi Candle M15</i>).\n\n` +
+                `<i>Atau klik tombol di bawah untuk langsung menyelesaikan & menyimpan trade:</i>`;
+
+    const notesKeyboard = [
+      [Markup.button.callback('⏩ Selesai & Simpan Trade', 'js_save_trade')],
+      [Markup.button.callback('❌ Batalkan Jurnal', 'cmd_cancel_journal')]
+    ];
+
+    if (ctx.callbackQuery) {
+      await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: notesKeyboard } }).catch(() => ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: notesKeyboard } }));
+    } else {
+      await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: notesKeyboard } });
+    }
+  };
+
+  bot.action('js_save_trade', async (ctx) => {
+    if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
     const telegramId = ctx.from?.id?.toString();
     const session = journalSessions.get(telegramId);
     if (!session) return ctx.reply('Sesi jurnal telah berakhir. Ketik /jurnal.');
@@ -1186,6 +1246,7 @@ export function initTelegramBot(db: any) {
 
   // Cancel Wizard
   bot.action('cmd_cancel_journal', async (ctx) => {
+    if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
     const telegramId = ctx.from?.id?.toString();
     if (telegramId) journalSessions.delete(telegramId);
     await ctx.editMessageText('❌ Pencatatan jurnal dibatalkan.', {
@@ -1203,7 +1264,7 @@ export function initTelegramBot(db: any) {
 
       journalSessions.delete(telegramId);
 
-      const pair = (s.pair || 'XAUUSD').toUpperCase();
+      const pair = 'XAUUSD';
       const direction = s.direction || 'BUY';
       const lot = s.lot || 0.01;
       const entry = s.entry || 0;
@@ -1211,26 +1272,35 @@ export function initTelegramBot(db: any) {
       const tp = s.tp || 0;
       const result = s.result || 'WIN';
       const pnl = s.pnl || 0;
-      const setup = s.setup || 'Telegram Journal';
+      const setup = 'Setup Pribadi';
       const mode = user.current_mode || 'backtest';
       const isWin = result.toUpperCase() === 'WIN';
       const pips = calculatePips(pair, entry, tp, pnl, lot, isWin, user?.currency === 'NANO');
 
       const sess = getWibTimeAndSession(s.trade_time);
+      const finalBefore = s.image_before ? normalizeTradingViewUrl(s.image_before) : null;
+      const finalAfter = s.image_after ? normalizeTradingViewUrl(s.image_after) : null;
+      const finalNotes = (s.notes && s.notes.trim()) ? s.notes.trim() : 'Setup Pribadi XAUUSD';
 
       const insertRes = await db.execute({
         sql: `INSERT INTO trades (
           user_id, pair, direction, setup_name, entry_price, sl, tp,
           account_balance, position_size, result, realized_pl, pips,
-          anxiety_level, notes, image, image_url, has_image, run_mode,
+          anxiety_level, notes, image, image_url, image_before, image_after, has_image, run_mode,
           session, trade_time, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
         args: [
           user.id, pair, direction, setup, entry, sl, tp,
           0, lot, result, pnl, pips,
-          2, `Logged via Telegram Interactive Wizard`,
-          s.image || null, s.image || null, s.image ? 1 : 0, mode,
-          sess.sessionName, sess.timeStr
+          2, finalNotes,
+          finalBefore || finalAfter || null,
+          finalBefore || finalAfter || null,
+          finalBefore,
+          finalAfter,
+          (finalBefore || finalAfter) ? 1 : 0,
+          mode,
+          sess.sessionName,
+          sess.timeStr
         ]
       });
 
@@ -1240,25 +1310,29 @@ export function initTelegramBot(db: any) {
       const signPL = pnl >= 0 ? '+' : '';
       const signPips = pips >= 0 ? '+' : '';
 
-      const card = `✅ <b>TRADE BERHASIL DICATAT!</b>\n` +
+      const card = `✅ <b>TRADE XAUUSD BERHASIL DICATAT!</b>\n` +
                    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
                    `🆔 <b>Trade ID:</b> #${tradeId}\n` +
                    `👤 <b>Akun:</b> <code>${user.username}</code> (${mode})\n` +
-                   `📈 <b>Pair:</b> <b>${pair}</b> (${direction === 'BUY' ? '🟢 BUY' : '🔴 SELL'})\n` +
+                   `📈 <b>Pair:</b> <b>XAUUSD</b> (${direction === 'BUY' ? '🟢 BUY' : '🔴 SELL'})\n` +
                    `📦 <b>Lot Size:</b> <b>${lot}</b>\n` +
+                   `🎯 <b>Setup:</b> Setup Pribadi\n` +
                    (entry > 0 ? `🎯 <b>Entry:</b> ${entry}\n` : '') +
                    (sl > 0 ? `🛑 <b>SL:</b> ${sl} | 🎯 <b>TP:</b> ${tp}\n` : '') +
                    `🕒 <b>Waktu:</b> <b>${sess.timeStr} WIB</b> (${sess.sessionDisplay})\n` +
                    `🏆 <b>Status:</b> <b>${result}</b>\n` +
                    `💵 <b>Realized P/L:</b> <b>${signPL}$${pnl.toFixed(2)}</b>\n` +
                    `📏 <b>Pips:</b> <b>${signPips}${pips} Pips</b>\n` +
-                   `🎯 <b>Setup:</b> ${setup}\n` +
-                   (s.image ? `📸 <b>Screenshot:</b> Terlampir (Tersimpan di Web)\n` : '') +
+                   `📸 <b>Chart Before:</b> ${finalBefore ? '✅ Terlampir' : '—'}\n` +
+                   `📸 <b>Chart After:</b> ${finalAfter ? '✅ Terlampir' : '—'}\n` +
+                   `📝 <b>Alasan:</b> ${escapeHtml(finalNotes)}\n` +
                    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
                    `⚡ <b>Equity Terkini:</b> <b>$${equityData.currentEquity.toFixed(2)}</b>\n` +
-                   `<i>Data otomatis tersinkronisasi ke Dashboard Web!</i>`;
+                   `🌐 <b>Web:</b> <a href="https://jalu-trading-jurnal.vercel.app/">jalu-trading-jurnal.vercel.app</a>\n` +
+                   `<i>Data tersinkronisasi otomatis ke Dashboard Web! ✨</i>`;
 
       const doneKeyboard = [
+        [Markup.button.url('🌐 Buka di Web Dashboard', 'https://jalu-trading-jurnal.vercel.app/')],
         [Markup.button.callback('📝 Jurnal Trade Lagi', 'cmd_start_journal'), Markup.button.callback('💰 Cek Saldo', 'cmd_saldo')],
         [Markup.button.callback('📊 Hari Ini', 'cmd_today'), Markup.button.callback('📱 Menu Utama', 'cmd_menu')]
       ];
@@ -2799,15 +2873,39 @@ export function initTelegramBot(db: any) {
 
   const handleResetExecute = async (ctx: any, targetUser?: any) => {
     try {
+      if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
       const telegramId = ctx.from?.id?.toString();
-      const user = targetUser || await getActiveUser(telegramId, ctx.from?.username);
+
+      let user: any = null;
+      if (ctx.match && ctx.match[1]) {
+        const uid = parseInt(ctx.match[1], 10);
+        if (!isNaN(uid)) {
+          const uRes = await db.execute({ sql: "SELECT * FROM users WHERE id = ?", args: [uid] });
+          if (uRes.rows.length > 0) user = uRes.rows[0];
+        }
+      }
+
+      if (!user) {
+        user = (targetUser && typeof targetUser === 'object' && targetUser.id) 
+          ? targetUser 
+          : await getActiveUser(telegramId, ctx.from?.username);
+      }
+
       if (!user) return sendUnlinkedPrompt(ctx);
 
+      const actualUserId = Number(user.id);
+
       // Delete trades, transactions, quests, characters for this user
-      await db.execute({ sql: "DELETE FROM trades WHERE user_id = ?", args: [user.id] }).catch(() => {});
-      await db.execute({ sql: "DELETE FROM transactions WHERE user_id = ?", args: [user.id] }).catch(() => {});
-      await db.execute({ sql: "DELETE FROM user_quests WHERE user_id = ?", args: [user.id] }).catch(() => {});
-      await db.execute({ sql: "DELETE FROM user_characters WHERE user_id = ?", args: [user.id] }).catch(() => {});
+      await db.execute({ sql: "DELETE FROM trades WHERE user_id = ?", args: [actualUserId] }).catch(() => {});
+      await db.execute({ sql: "DELETE FROM transactions WHERE user_id = ?", args: [actualUserId] }).catch(() => {});
+      await db.execute({ sql: "DELETE FROM user_quests WHERE user_id = ?", args: [actualUserId] }).catch(() => {});
+      await db.execute({ sql: "DELETE FROM user_characters WHERE user_id = ?", args: [actualUserId] }).catch(() => {});
+
+      if (telegramId) {
+        journalSessions.delete(telegramId);
+        pendingPhotos.delete(telegramId);
+        recentBulkBatches.delete(telegramId);
+      }
 
       const isCent = user.currency === 'USC' || user.currency === 'NANO';
       const sym = isCent ? '¢' : (user.currency === 'IDR' ? 'Rp ' : '$');
@@ -2824,6 +2922,7 @@ export function initTelegramBot(db: any) {
                   `<code>/setmodal 10000</code>`;
 
       const btns = [
+        [{ text: '🌐 Buka Web Dashboard', url: 'https://jalu-trading-jurnal.vercel.app/' }],
         [{ text: '📝 Mulai Catat Jurnal (/jurnal)', callback_data: 'cmd_start_journal' }],
         [{ text: '💰 Cek Saldo (/saldo)', callback_data: 'cmd_saldo' }],
         [{ text: '📱 Menu Utama', callback_data: 'cmd_menu' }]
@@ -2831,14 +2930,14 @@ export function initTelegramBot(db: any) {
 
       return sendOrEdit(ctx, msg, false, btns);
     } catch (e) {
-      console.error(e);
+      console.error("handleResetExecute error:", e);
       await ctx.reply('❌ Gagal mereset data akun.');
     }
   };
 
   bot.command(['reset', 'resetdata', 'cleardata'], handleResetPrompt);
   bot.action('cmd_reset', handleResetPrompt);
-  bot.action(/^confirm_reset_(\d+)$/, handleResetExecute);
+  bot.action(/^confirm_reset_(\d+)$/, (ctx) => handleResetExecute(ctx));
   bot.action('cancel_reset', async (ctx: any) => {
     await ctx.answerCbQuery('Reset dibatalkan').catch(() => {});
     const msg = `❌ <b>RESET DATA DIBATALKAN</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nSeluruh data trade, saldo, dan riwayat akun Anda tetap aman tersimpan.`;
@@ -3266,22 +3365,6 @@ export function initTelegramBot(db: any) {
       if (telegramId && journalSessions.has(telegramId)) {
         const session = journalSessions.get(telegramId)!;
 
-        // Custom Pair typed in chat
-        if (session.step === 'pair') {
-          session.pair = text.toUpperCase().replace(/[^A-Z0-9]/g, '');
-          session.step = 'direction';
-          session.timestamp = Date.now();
-
-          const dirKeyboard = [
-            [Markup.button.callback('🟢 BUY (Long)', 'jd_BUY'), Markup.button.callback('🔴 SELL (Short)', 'jd_SELL')],
-            [Markup.button.callback('❌ Batalkan', 'cmd_cancel_journal')]
-          ];
-          return ctx.reply(`Pair: <b>${session.pair}</b>\nPilih arah posisi:`, {
-            parse_mode: 'HTML',
-            reply_markup: { inline_keyboard: dirKeyboard }
-          });
-        }
-
         // Custom Lot typed in chat
         if (session.step === 'lot') {
           const lot = parseFloat(text);
@@ -3297,7 +3380,7 @@ export function initTelegramBot(db: any) {
             [Markup.button.callback('❌ Batalkan', 'cmd_cancel_journal')]
           ];
           return ctx.reply(
-            `Lot: <b>${lot}</b>\nKetik harga <b>Entry</b> Anda (cth: <code>2650.50</code>) atau klik Lewati:`,
+            `Lot: <b>${lot}</b>\nKetik harga <b>Entry</b> Anda di chat (cth: <code>2650.50</code>) atau klik Lewati:`,
             { parse_mode: 'HTML', reply_markup: { inline_keyboard: skipKeyboard } }
           );
         }
@@ -3313,7 +3396,7 @@ export function initTelegramBot(db: any) {
 
           const resKeyboard = [
             [Markup.button.callback('🏆 WIN (Profit)', 'jr_WIN'), Markup.button.callback('❌ LOSS (Rugi)', 'jr_LOSS')],
-            [Markup.button.callback('⚖️ BE (Break Even)', 'jr_BE'), Markup.button.callback('⏳ Running / Open', 'jr_PENDING')],
+            [Markup.button.callback('⚖️ BE (Break Even)', 'jr_BE'), Markup.button.callback('⏳ Masih Berjalan (Running)', 'jr_PENDING')],
             [Markup.button.callback('❌ Batalkan', 'cmd_cancel_journal')]
           ];
           return ctx.reply(`Entry tercatat: <b>${session.entry || 'Dilewati'}</b>\nPilih status hasil trade:`, {
@@ -3332,27 +3415,36 @@ export function initTelegramBot(db: any) {
           if (session.result === 'WIN' && pnlVal < 0) pnlVal = Math.abs(pnlVal);
 
           session.pnl = pnlVal;
-          session.step = 'setup';
-          session.timestamp = Date.now();
-
-          return promptSetupStep(ctx, session);
+          return promptTimeStep(ctx, session);
         }
 
-        // Custom Setup / Note typed in chat
-        if (session.step === 'setup') {
-          session.setup = text;
-          if (session.image) {
-            return completeInteractiveJournal(ctx, telegramId, session);
-          } else {
-            return promptImageStep(ctx, session);
-          }
+        // Custom Execution Time typed in chat (e.g. 14:30)
+        if (session.step === 'time') {
+          const sess = getWibTimeAndSession(text);
+          session.trade_time = sess.timeStr;
+          session.session = sess.sessionName;
+          return promptBeforeImageStep(ctx, session);
         }
 
-        // Custom Image / Skip typed in chat
-        if (session.step === 'image') {
-          if (text.startsWith('http://') || text.startsWith('https://')) {
-            session.image = text;
+        // Custom Chart Before link or skip typed in chat
+        if (session.step === 'image_before') {
+          if (text.startsWith('http://') || text.startsWith('https://') || text.includes('tradingview.com')) {
+            session.image_before = normalizeTradingViewUrl(text);
           }
+          return promptAfterImageStep(ctx, session);
+        }
+
+        // Custom Chart After link or skip typed in chat
+        if (session.step === 'image_after') {
+          if (text.startsWith('http://') || text.startsWith('https://') || text.includes('tradingview.com')) {
+            session.image_after = normalizeTradingViewUrl(text);
+          }
+          return promptNotesStep(ctx, session);
+        }
+
+        // Custom Reason / Notes typed in chat
+        if (session.step === 'notes') {
+          session.notes = text;
           return completeInteractiveJournal(ctx, telegramId, session);
         }
       }
@@ -3475,12 +3567,17 @@ export function initTelegramBot(db: any) {
       const fileLink = await ctx.telegram.getFileLink(fileId);
       const base64Img = await getTelegramImageBase64(fileLink.href);
 
-      // Check if user is in interactive journal session waiting for image
+      // Check if user is in interactive journal session waiting for image_before or image_after
       if (telegramId && journalSessions.has(telegramId)) {
         const session = journalSessions.get(telegramId)!;
-        if (session.step === 'image') {
-          session.image = base64Img;
-          await completeInteractiveJournal(ctx, telegramId, session);
+        if (session.step === 'image_before') {
+          session.image_before = base64Img;
+          await promptAfterImageStep(ctx, session);
+          return;
+        }
+        if (session.step === 'image_after') {
+          session.image_after = base64Img;
+          await promptNotesStep(ctx, session);
           return;
         }
       }
@@ -3630,6 +3727,7 @@ export function initTelegramBot(db: any) {
   });
 
   bot.action('cmd_journal_with_saved_photo', async (ctx) => {
+    if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
     const telegramId = ctx.from?.id?.toString();
     const user = await getActiveUser(telegramId, ctx.from?.username);
     if (!user) return sendUnlinkedPrompt(ctx);
@@ -3638,29 +3736,31 @@ export function initTelegramBot(db: any) {
     pendingPhotos.delete(telegramId);
 
     journalSessions.set(telegramId, {
-      step: 'pair',
-      image: saved?.image,
+      pair: 'XAUUSD',
+      setup: 'Setup Pribadi',
+      step: 'direction',
+      image_before: saved?.image,
       timestamp: Date.now()
     });
 
-    const msg = `📝 <b>JURNAL TRADE BARU (Langkah 1/6)</b>\n` +
+    const msg = `📝 <b>JURNAL TRADE XAUUSD (Langkah 1/7 - Arah Posisi)</b>\n` +
                 `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
                 `👤 Akun: <code>${user.username}</code>\n` +
-                `📸 <i>Screenshot chart berhasil dilampirkan!</i>\n\n` +
-                `Pilih instrumen / pair yang Anda tradingkan, atau ketik langsung di chat (cth: <i>EURUSD</i>):`;
+                `📈 Pair: <b>XAUUSD (Gold)</b> <i>(Otomatis)</i>\n` +
+                `🎯 Setup: <b>Setup Pribadi</b> <i>(Otomatis)</i>\n` +
+                `📸 <i>Screenshot Chart BEFORE berhasil dipasang!</i>\n\n` +
+                `Pilih arah posisi trade Anda:`;
 
-    const pairKeyboard = [
-      [Markup.button.callback('🟡 XAUUSD (Gold)', 'jp_XAUUSD'), Markup.button.callback('🪙 BTCUSD', 'jp_BTCUSD')],
-      [Markup.button.callback('🇪🇺 EURUSD', 'jp_EURUSD'), Markup.button.callback('🇬🇧 GBPUSD', 'jp_GBPUSD')],
-      [Markup.button.callback('🇯🇵 USDJPY', 'jp_USDJPY'), Markup.button.callback('🇦🇺 AUDUSD', 'jp_AUDUSD')],
+    const dirKeyboard = [
+      [Markup.button.callback('🟢 BUY (Long)', 'jd_BUY'), Markup.button.callback('🔴 SELL (Short)', 'jd_SELL')],
       [Markup.button.callback('❌ Batalkan Jurnal', 'cmd_cancel_journal')]
     ];
 
     if (ctx.callbackQuery) {
-      await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: pairKeyboard } })
-        .catch(() => ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: pairKeyboard } }));
+      await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: dirKeyboard } })
+        .catch(() => ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: dirKeyboard } }));
     } else {
-      await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: pairKeyboard } });
+      await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: dirKeyboard } });
     }
   });
 

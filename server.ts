@@ -266,6 +266,14 @@ async function initDb() {
       await db.execute("ALTER TABLE trades ADD COLUMN trade_time TEXT DEFAULT NULL");
     } catch (e) {}
 
+    try {
+      await db.execute("ALTER TABLE trades ADD COLUMN image_before TEXT DEFAULT NULL");
+    } catch (e) {}
+
+    try {
+      await db.execute("ALTER TABLE trades ADD COLUMN image_after TEXT DEFAULT NULL");
+    } catch (e) {}
+
     await db.execute(`
       CREATE TABLE IF NOT EXISTS telegram_sessions (
         telegram_id TEXT PRIMARY KEY,
@@ -909,6 +917,8 @@ app.post("/api/trades", authMiddleware, async (req: any, res) => {
       pips,
       direction,
       image,
+      image_before,
+      image_after,
       run_mode,
       session,
       trade_time
@@ -919,16 +929,19 @@ app.post("/api/trades", authMiddleware, async (req: any, res) => {
       args: [req.user.id]
     });
     const modeToUse = run_mode || (userRes.rows.length > 0 ? userRes.rows[0].current_mode : 'backtest');
+    const finalImageBefore = image_before || image || null;
+    const finalImageAfter = image_after || null;
+    const primaryImage = finalImageBefore || finalImageAfter || null;
 
     const resultDb = await db.execute({
       sql: `INSERT INTO trades (
-        user_id, pair, direction, setup_name, entry_price, sl, tp, account_balance, risk_percentage, position_size, nominal_risk, anxiety_level, checklist, notes, result, realized_pl, pips, image, run_mode, session, trade_time
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        user_id, pair, direction, setup_name, entry_price, sl, tp, account_balance, risk_percentage, position_size, nominal_risk, anxiety_level, checklist, notes, result, realized_pl, pips, image, image_before, image_after, run_mode, session, trade_time
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
         req.user.id, 
-        pair || null, 
+        pair || 'XAUUSD', 
         direction || 'Buy', 
-        setup_name || null, 
+        setup_name || 'Price Action XAUUSD', 
         entry_price !== undefined ? entry_price : null, 
         sl !== undefined ? sl : null, 
         tp !== undefined ? tp : null, 
@@ -942,7 +955,9 @@ app.post("/api/trades", authMiddleware, async (req: any, res) => {
         result || 'Pending', 
         realized_pl !== undefined ? realized_pl : null, 
         pips !== undefined && pips !== null && pips !== '' ? Number(pips) : null,
-        image || null, 
+        primaryImage, 
+        finalImageBefore,
+        finalImageAfter,
         modeToUse,
         session || null,
         trade_time || null
@@ -1022,9 +1037,11 @@ app.get("/api/trades", authMiddleware, async (req: any, res) => {
 app.put("/api/trades/:id", authMiddleware, async (req: any, res) => {
   try {
     const { id } = req.params;
-    const { result, realized_pl, pips, notes, image } = req.body;
-    
-    const { session, trade_time } = req.body;
+    const { result, realized_pl, pips, notes, image, image_before, image_after, session, trade_time } = req.body;
+
+    const imgBefore = image_before !== undefined ? image_before : (image !== undefined ? image : null);
+    const imgAfter = image_after !== undefined ? image_after : null;
+    const primaryImg = imgBefore || imgAfter || (image !== undefined ? image : null);
     
     await db.execute({
       sql: `UPDATE trades SET 
@@ -1032,7 +1049,9 @@ app.put("/api/trades/:id", authMiddleware, async (req: any, res) => {
         realized_pl = ?, 
         pips = CASE WHEN ? IS NOT NULL THEN ? ELSE pips END,
         notes = ?, 
-        image = ?,
+        image = CASE WHEN ? IS NOT NULL THEN ? ELSE image END,
+        image_before = CASE WHEN ? IS NOT NULL THEN ? ELSE image_before END,
+        image_after = CASE WHEN ? IS NOT NULL THEN ? ELSE image_after END,
         session = CASE WHEN ? IS NOT NULL THEN ? ELSE session END,
         trade_time = CASE WHEN ? IS NOT NULL THEN ? ELSE trade_time END
       WHERE id = ? AND user_id = ?`,
@@ -1042,7 +1061,12 @@ app.put("/api/trades/:id", authMiddleware, async (req: any, res) => {
         pips !== undefined ? Number(pips) : null,
         pips !== undefined ? Number(pips) : null,
         notes !== undefined ? notes : null,
-        image !== undefined ? image : null,
+        primaryImg,
+        primaryImg,
+        imgBefore,
+        imgBefore,
+        imgAfter,
+        imgAfter,
         session !== undefined ? session : null,
         session !== undefined ? session : null,
         trade_time !== undefined ? trade_time : null,

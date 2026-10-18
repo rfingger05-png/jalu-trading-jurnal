@@ -17,6 +17,8 @@ export type Trade = {
   result: 'Pending' | 'Win' | 'Loss' | 'Breakeven';
   image: string | null;
   image_url?: string | null;
+  image_before?: string | null;
+  image_after?: string | null;
   has_image?: number | boolean;
   run_mode: 'backtest' | 'demo';
   session?: string | null;

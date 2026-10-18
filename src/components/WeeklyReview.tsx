@@ -279,26 +279,24 @@ export default function WeeklyReview({
           <button
             onClick={() => setSelectedWeek('current')}
             className={cn(
-              "px-3 py-1.5 rounded transition-colors cursor-pointer flex items-center gap-1.5",
+              "px-3 py-1.5 rounded transition-colors cursor-pointer flex items-center gap-1.5 font-bold",
               selectedWeek === 'current'
-                ? "bg-cyan-950 text-cyan-300 font-semibold border border-cyan-800/60 shadow-xs"
-                : "text-slate-400 hover:text-slate-200"
+                ? "bg-[#FF3333] text-white shadow-xs"
+                : "text-[#A3A3A3] hover:text-white"
             )}
           >
             <span>Minggu Ini</span>
-            <span className="text-[10px] opacity-75">({format(currentWeekStart, 'dd/MM')})</span>
           </button>
           <button
             onClick={() => setSelectedWeek('previous')}
             className={cn(
-              "px-3 py-1.5 rounded transition-colors cursor-pointer flex items-center gap-1.5",
+              "px-3 py-1.5 rounded transition-colors cursor-pointer flex items-center gap-1.5 font-bold",
               selectedWeek === 'previous'
-                ? "bg-cyan-950 text-cyan-300 font-semibold border border-cyan-800/60 shadow-xs"
-                : "text-slate-400 hover:text-slate-200"
+                ? "bg-[#FF3333] text-white shadow-xs"
+                : "text-[#A3A3A3] hover:text-white"
             )}
           >
             <span>Minggu Lalu</span>
-            <span className="text-[10px] opacity-75">({format(prevWeekStart, 'dd/MM')})</span>
           </button>
         </div>
       </div>
@@ -383,12 +381,16 @@ export default function WeeklyReview({
                 {activeMetrics.winRate}%
               </div>
               <div className="text-[11px] font-mono text-slate-400 pt-0.5 flex items-center justify-between">
-                <span>
-                  <strong className="text-emerald-400">{activeMetrics.wins}W</strong>
-                  {' / '}
-                  <strong className="text-rose-400">{activeMetrics.losses}L</strong>
-                  {activeMetrics.breakevens > 0 && ` / ${activeMetrics.breakevens}BE`}
-                </span>
+                {activeMetrics.total > 0 ? (
+                  <span>
+                    <strong className="text-emerald-400">{activeMetrics.wins}W</strong>
+                    {' / '}
+                    <strong className="text-rose-400">{activeMetrics.losses}L</strong>
+                    {activeMetrics.breakevens > 0 && ` / ${activeMetrics.breakevens}BE`}
+                  </span>
+                ) : (
+                  <span className="text-slate-500">0 Trade (Data Bersih)</span>
+                )}
                 {compMetrics.total > 0 && (
                   <span className={cn(
                     "text-[10px] font-semibold",

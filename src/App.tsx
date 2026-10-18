@@ -588,7 +588,12 @@ export default function App() {
             {activeTab === 'settings' && (
               <Settings 
                 user={user} 
-                onUserUpdate={fetchUser} 
+                onUserUpdate={() => {
+                  setTrades([]);
+                  setTransactions([]);
+                  fetchUser();
+                  fetchTrades();
+                }} 
                 onLocalUpdate={handleUserLocalUpdate} 
                 onLogout={handleLogout} 
               />
