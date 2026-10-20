@@ -576,6 +576,7 @@ export default function App() {
                 currentEquity={currentEquity}
                 onOpenGallery={() => setActiveTab('gallery')}
                 onOpenHistory={() => setActiveTab('history')}
+                onUserUpdate={fetchUser}
               />
             )}
 

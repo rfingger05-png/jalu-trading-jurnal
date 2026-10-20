@@ -38,6 +38,8 @@ export type User = {
   myfxbook_connected?: boolean;
   prop_firm_daily_dd?: number;
   prop_firm_max_dd?: number;
+  weekly_dd?: number;
+  analytics_timeframe?: 'daily' | 'weekly';
   prop_firm_target?: number;
   prop_firm_payout_total?: number;
   telegram_id?: string;

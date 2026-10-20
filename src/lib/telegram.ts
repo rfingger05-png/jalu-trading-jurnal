@@ -2121,6 +2121,348 @@ export function initTelegramBot(db: any) {
   bot.action('cmd_today', (ctx) => getStatsByTimeframe(ctx, 'today'));
   bot.action('cmd_weekly', (ctx) => getStatsByTimeframe(ctx, 'weekly'));
 
+  // ========================================================
+  // COMMAND: /analytic /analytics - Tampilan Analytics & Dropdown Sync
+  // ========================================================
+  const handleAnalytic = async (ctx: any, forcedMode?: 'daily' | 'weekly', bannerMsg?: string) => {
+    try {
+      const telegramId = ctx.from?.id?.toString();
+      const user = await getActiveUser(telegramId, ctx.from?.username);
+      if (!user) return sendUnlinkedPrompt(ctx);
+
+      const text = (ctx.message?.text || '').toLowerCase().trim();
+      let mode: 'daily' | 'weekly' = forcedMode || (user.analytics_timeframe === 'daily' ? 'daily' : 'weekly');
+
+      if (!forcedMode) {
+        if (text.includes('harian') || text.includes('daily') || text.includes('hari')) {
+          mode = 'daily';
+          await db.execute({
+            sql: "UPDATE users SET analytics_timeframe = 'daily' WHERE id = ?",
+            args: [user.id]
+          });
+          user.analytics_timeframe = 'daily';
+        } else if (text.includes('weekly') || text.includes('minggu') || text.includes('mingguan')) {
+          mode = 'weekly';
+          await db.execute({
+            sql: "UPDATE users SET analytics_timeframe = 'weekly' WHERE id = ?",
+            args: [user.id]
+          });
+          user.analytics_timeframe = 'weekly';
+        }
+      }
+
+      const s = await getUserEquityData(user.id, user);
+      const isNano = user.currency === 'NANO';
+      const isCent = user.currency === 'USC' || isNano;
+      const sym = isCent ? '¢' : (user.currency === 'IDR' ? 'Rp ' : '$');
+
+      const tradesRes = await db.execute({
+        sql: "SELECT id, pair, direction, setup_name, entry_price, sl, tp, position_size, result, realized_pl, pips, created_at FROM trades WHERE user_id = ? AND result != 'Pending' ORDER BY created_at DESC",
+        args: [user.id]
+      });
+      const allTrades = tradesRes.rows;
+
+      const now = new Date();
+      let filteredTrades: any[] = [];
+      let periodLabel = '';
+      let dateRangeStr = '';
+
+      if (mode === 'daily') {
+        periodLabel = 'HARIAN (DAILY)';
+        const todayWibStr = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Jakarta" })).toISOString().split('T')[0];
+        const todayUtcStr = now.toISOString().split('T')[0];
+        dateRangeStr = todayWibStr;
+
+        filteredTrades = allTrades.filter((t: any) => {
+          let d = t.created_at || '';
+          if (!d.includes('Z')) d += 'Z';
+          try {
+            const dt = new Date(d);
+            const dtWibStr = new Date(dt.toLocaleString("en-US", { timeZone: "Asia/Jakarta" })).toISOString().split('T')[0];
+            const dtUtcStr = dt.toISOString().split('T')[0];
+            return dtWibStr === todayWibStr || dtUtcStr === todayUtcStr;
+          } catch(e) { return false; }
+        });
+      } else {
+        periodLabel = 'WEEKLY (MINGGUAN)';
+        const dayOfWeek = now.getDay();
+        const diffToMonday = (dayOfWeek + 6) % 7;
+        const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - diffToMonday, 0, 0, 0, 0);
+        const sunday = new Date(monday.getTime() + 7 * 24 * 60 * 60 * 1000 - 1);
+        dateRangeStr = `${monday.toLocaleDateString('id-ID', { day: '2-digit', month: 'short' })} – ${sunday.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })}`;
+
+        filteredTrades = allTrades.filter((t: any) => {
+          let d = t.created_at || '';
+          if (!d.includes('Z')) d += 'Z';
+          try {
+            const tDate = new Date(d);
+            return tDate >= monday && tDate <= sunday;
+          } catch(e) { return false; }
+        });
+      }
+
+      let totalPL = 0;
+      let wins = 0;
+      let losses = 0;
+      let grossProfit = 0;
+      let grossLoss = 0;
+      let totalPips = 0;
+
+      filteredTrades.forEach((t: any) => {
+        const pl = Number(t.realized_pl) || 0;
+        totalPL += pl;
+        const isWin = (t.result || '').toUpperCase() === 'WIN';
+        if (isWin) {
+          wins++;
+          grossProfit += Math.max(0, pl);
+        } else if ((t.result || '').toUpperCase() === 'LOSS') {
+          losses++;
+          grossLoss += Math.abs(Math.min(0, pl));
+        }
+
+        const pips = (t.pips !== null && t.pips !== undefined && !isNaN(Number(t.pips)))
+          ? Number(t.pips)
+          : calculatePips(t.pair || 'XAUUSD', t.entry_price || 0, t.tp || 0, pl, t.position_size || 0.1, isWin, isNano);
+        totalPips += pips;
+      });
+
+      const totalCount = filteredTrades.length;
+      const winRate = totalCount > 0 ? ((wins / totalCount) * 100).toFixed(1) : '0.0';
+      const profitFactor = grossLoss > 0 ? (grossProfit / grossLoss).toFixed(2) : (grossProfit > 0 ? 'MAX' : '0.00');
+      const signPL = totalPL >= 0 ? '+' : '';
+      const signPips = totalPips >= 0 ? '+' : '';
+
+      // Drawdown calculations
+      const dailyDDPct = user.prop_firm_daily_dd ? Number(user.prop_firm_daily_dd) : 5.0;
+      const maxDDPct = user.prop_firm_max_dd ? Number(user.prop_firm_max_dd) : 10.0;
+      const initialBal = s.initialBal || 1000;
+
+      const dailyMaxLoss = Math.max(25, (initialBal * dailyDDPct) / 100);
+      const todayLoss = s.todayLoss || 0;
+      const dailyDDRemaining = Math.max(0, dailyMaxLoss - todayLoss);
+      const dailyDDUsedPct = dailyMaxLoss > 0 ? Math.min(100, (todayLoss / dailyMaxLoss) * 100) : 0;
+
+      const weeklyMaxLoss = Math.max(50, (initialBal * maxDDPct) / 100);
+      const weekLoss = grossLoss;
+      const weeklyDDRemaining = Math.max(0, weeklyMaxLoss - weekLoss);
+      const weeklyDDUsedPct = weeklyMaxLoss > 0 ? Math.min(100, (weekLoss / weeklyMaxLoss) * 100) : 0;
+
+      const activeLoss = mode === 'daily' ? todayLoss : weekLoss;
+      const activeMaxLoss = mode === 'daily' ? dailyMaxLoss : weeklyMaxLoss;
+      const activeDDPct = mode === 'daily' ? dailyDDPct : maxDDPct;
+      const activeDDRemaining = mode === 'daily' ? dailyDDRemaining : weeklyDDRemaining;
+      const activeDDUsedPct = mode === 'daily' ? dailyDDUsedPct : weeklyDDUsedPct;
+
+      let ddStatusText = '🛡️ AMAN';
+      if (activeDDUsedPct >= 100) ddStatusText = '🚨 LIMIT TERLAMPAUI!';
+      else if (activeDDUsedPct >= 70) ddStatusText = '⚠️ WASPADA (Mendekati Limit)';
+
+      let msg = '';
+      if (bannerMsg) {
+        msg += `${bannerMsg}\n\n`;
+      }
+
+      msg += `📊 <b>FITUR ANALYTICS: ${periodLabel}</b>\n` +
+             `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+             `👤 <b>Akun:</b> <code>${user.username}</code> | 🌐 <b>Dropdown Web:</b> <code>${mode === 'daily' ? 'Harian' : 'Weekly'}</code>\n` +
+             `📅 <b>Periode:</b> <b>${dateRangeStr}</b>\n` +
+             `💰 <b>Equity Terkini:</b> <b>${sym}${s.currentEquity.toLocaleString('en-US', { minimumFractionDigits: 2 })}</b>\n\n` +
+             `📈 <b>METRIK UTAMA (${mode === 'daily' ? 'HARI INI' : 'MINGGU INI'}):</b>\n` +
+             `• Net Realized P/L: <b>${signPL}${sym}${totalPL.toLocaleString('en-US', { minimumFractionDigits: 2 })}</b>\n` +
+             `• Win Rate: <b>${winRate}%</b> (${wins}W · ${losses}L)\n` +
+             `• Total Trades: <b>${totalCount}</b> Closed\n` +
+             `• Profit Factor: <b>${profitFactor}</b>\n` +
+             `• Akumulasi Pips: <b>${signPips}${totalPips} Pips</b>\n\n` +
+             `🛡️ <b>STATUS DRAWDOWN (DD) & BUFFER:</b>\n` +
+             `• Batas DD (${mode === 'daily' ? 'Harian' : 'Weekly'}): <b>${activeDDPct}%</b> (Max Loss: ${sym}${activeMaxLoss.toLocaleString('en-US', { minimumFractionDigits: 2 })})\n` +
+             `• Realized Loss: <b>-${sym}${activeLoss.toLocaleString('en-US', { minimumFractionDigits: 2 })}</b> (${activeDDUsedPct.toFixed(1)}% terpakai)\n` +
+             `• Sisa Buffer Aman: <b>${sym}${activeDDRemaining.toLocaleString('en-US', { minimumFractionDigits: 2 })}</b>\n` +
+             `• Status Evaluasi: <b>${ddStatusText}</b>\n` +
+             `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+             `<i>💡 Atur dropdown tampilan atau ubah batas DD lewat tombol di bawah:</i>`;
+
+      const buttons = [
+        [
+          mode === 'daily'
+            ? Markup.button.callback('✅ 📅 Harian (Aktif)', 'cmd_noop')
+            : Markup.button.callback('👉 📅 Set Dropdown: Harian', 'cmd_set_analytic_daily'),
+          mode === 'weekly'
+            ? Markup.button.callback('✅ 📆 Weekly (Aktif)', 'cmd_noop')
+            : Markup.button.callback('👉 📆 Set Dropdown: Weekly', 'cmd_set_analytic_weekly')
+        ],
+        [
+          Markup.button.callback('🛡️ Atur Batas Drawdown (DD)', 'cmd_open_setdd'),
+          Markup.button.callback('🔄 Refresh Data', mode === 'daily' ? 'cmd_set_analytic_daily' : 'cmd_set_analytic_weekly')
+        ],
+        [
+          Markup.button.callback('📝 Jurnal Baru', 'cmd_start_journal'),
+          Markup.button.callback('💰 Cek Saldo', 'cmd_saldo')
+        ],
+        [
+          Markup.button.url('🌐 Buka Web Analytics', 'https://jalu-trading-jurnal.vercel.app/'),
+          Markup.button.callback('📱 Menu Utama', 'cmd_menu')
+        ]
+      ];
+
+      await sendOrEdit(ctx, msg, false, buttons);
+    } catch (e) {
+      console.error("handleAnalytic error:", e);
+      await ctx.reply('Terjadi kesalahan saat memuat analytics.');
+    }
+  };
+
+  bot.command(['analytic', 'analytics'], (ctx) => handleAnalytic(ctx));
+  bot.action('cmd_analytic', (ctx) => handleAnalytic(ctx));
+  bot.action('cmd_set_analytic_daily', async (ctx: any) => {
+    try {
+      const telegramId = ctx.from?.id?.toString();
+      const user = await getActiveUser(telegramId, ctx.from?.username);
+      if (user) {
+        await db.execute({
+          sql: "UPDATE users SET analytics_timeframe = 'daily' WHERE id = ?",
+          args: [user.id]
+        });
+        user.analytics_timeframe = 'daily';
+      }
+      await handleAnalytic(ctx, 'daily', '✅ <b>Dropdown Analytics di Web & Bot berhasil diatur ke: HARIAN (Daily)!</b>');
+    } catch (e) {
+      console.error(e);
+      await handleAnalytic(ctx, 'daily');
+    }
+  });
+
+  bot.action('cmd_set_analytic_weekly', async (ctx: any) => {
+    try {
+      const telegramId = ctx.from?.id?.toString();
+      const user = await getActiveUser(telegramId, ctx.from?.username);
+      if (user) {
+        await db.execute({
+          sql: "UPDATE users SET analytics_timeframe = 'weekly' WHERE id = ?",
+          args: [user.id]
+        });
+        user.analytics_timeframe = 'weekly';
+      }
+      await handleAnalytic(ctx, 'weekly', '✅ <b>Dropdown Analytics di Web & Bot berhasil diatur ke: WEEKLY (Mingguan)!</b>');
+    } catch (e) {
+      console.error(e);
+      await handleAnalytic(ctx, 'weekly');
+    }
+  });
+
+  // ========================================================
+  // COMMAND: /setdd /drawdown /setdrawdown - Atur Batas Drawdown (DD)
+  // ========================================================
+  const handleSetDD = async (ctx: any, customType?: 'daily' | 'weekly', customValue?: number) => {
+    try {
+      const telegramId = ctx.from?.id?.toString();
+      const user = await getActiveUser(telegramId, ctx.from?.username);
+      if (!user) return sendUnlinkedPrompt(ctx);
+
+      const isNano = user.currency === 'NANO';
+      const isCent = user.currency === 'USC' || isNano;
+      const sym = isCent ? '¢' : (user.currency === 'IDR' ? 'Rp ' : '$');
+      const s = await getUserEquityData(user.id, user);
+
+      let ddType = customType;
+      let ddVal = customValue;
+
+      if (!ddType && !ddVal) {
+        const text = (ctx.message?.text || '').trim();
+        const parts = text.split(/\s+/);
+        if (parts.length === 2) {
+          const val = parseFloat(parts[1].replace('%', ''));
+          if (!isNaN(val) && val > 0 && val <= 50) {
+            ddType = 'daily';
+            ddVal = val;
+          }
+        } else if (parts.length >= 3) {
+          const typeStr = parts[1].toLowerCase();
+          const val = parseFloat(parts[2].replace('%', ''));
+          if (!isNaN(val) && val > 0 && val <= 50) {
+            ddType = (typeStr === 'weekly' || typeStr === 'mingguan' || typeStr === 'max') ? 'weekly' : 'daily';
+            ddVal = val;
+          }
+        }
+      }
+
+      if (ddType && ddVal) {
+        if (ddType === 'daily') {
+          await db.execute({
+            sql: "UPDATE users SET prop_firm_daily_dd = ? WHERE id = ?",
+            args: [ddVal, user.id]
+          });
+          user.prop_firm_daily_dd = ddVal;
+        } else {
+          await db.execute({
+            sql: "UPDATE users SET prop_firm_max_dd = ?, weekly_dd = ? WHERE id = ?",
+            args: [ddVal, ddVal, user.id]
+          });
+          user.prop_firm_max_dd = ddVal;
+          user.weekly_dd = ddVal;
+        }
+
+        const maxLoss = ((s.initialBal || 1000) * ddVal) / 100;
+        const successMsg =
+          `🛡️ <b>BATAS DRAWDOWN (DD) BERHASIL DIATUR!</b>\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `👤 Akun: <code>${user.username}</code>\n` +
+          `⚙️ Parameter: <b>${ddType === 'daily' ? 'Daily DD (Harian)' : 'Weekly / Max DD'}</b>\n` +
+          `🎯 Batas Persentase: <b>${ddVal}%</b>\n` +
+          `💵 Toleransi Max Loss: <b>${sym}${maxLoss.toLocaleString('en-US', { minimumFractionDigits: 2 })}</b> (dari modal ${sym}${s.initialBal.toLocaleString('en-US', { minimumFractionDigits: 2 })})\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `✅ <i>Tersinkronisasi otomatis dengan Web Analytics & peringatan Telegram!</i>`;
+
+        const btns = [
+          [Markup.button.callback('📊 Buka Analytics', 'cmd_analytic'), Markup.button.callback('🛡️ Atur DD Lain', 'cmd_open_setdd')],
+          [Markup.button.callback('📱 Menu Utama', 'cmd_menu')]
+        ];
+        return sendOrEdit(ctx, successMsg, false, btns);
+      }
+
+      // Display Drawdown Configuration Menu
+      const curDailyDD = user.prop_firm_daily_dd ? Number(user.prop_firm_daily_dd) : 5.0;
+      const curMaxDD = user.prop_firm_max_dd ? Number(user.prop_firm_max_dd) : 10.0;
+      const dailyMaxLoss = ((s.initialBal || 1000) * curDailyDD) / 100;
+      const weeklyMaxLoss = ((s.initialBal || 1000) * curMaxDD) / 100;
+
+      const msg =
+        `🛡️ <b>PENGATURAN BATAS DRAWDOWN (DD)</b>\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `👤 Akun: <code>${user.username}</code> | Modal Awal: <b>${sym}${s.initialBal.toLocaleString('en-US', { minimumFractionDigits: 2 })}</b>\n\n` +
+        `📊 <b>STATUS BATAS DD SAAT INI:</b>\n` +
+        `• <b>Daily Drawdown (Harian):</b> <b>${curDailyDD}%</b> (Max Loss: ${sym}${dailyMaxLoss.toFixed(2)})\n` +
+        `• <b>Weekly / Max Drawdown:</b> <b>${curMaxDD}%</b> (Max Loss: ${sym}${weeklyMaxLoss.toFixed(2)})\n\n` +
+        `Pilih batas preset cepat di bawah atau ketik di chat:\n` +
+        `• <code>/setdd daily [persen]</code> (cth: <code>/setdd daily 4</code>)\n` +
+        `• <code>/setdd weekly [persen]</code> (cth: <code>/setdd weekly 12</code>)\n` +
+        `• <code>/setdd [persen]</code> (cth: <code>/setdd 5</code>)`;
+
+      const btns = [
+        [Markup.button.callback(`📅 DD Harian: 3%`, 'cmd_setdd_daily_3'), Markup.button.callback(`📅 DD Harian: 5%`, 'cmd_setdd_daily_5'), Markup.button.callback(`📅 DD Harian: 8%`, 'cmd_setdd_daily_8')],
+        [Markup.button.callback(`📆 DD Weekly: 8%`, 'cmd_setdd_weekly_8'), Markup.button.callback(`📆 DD Weekly: 10%`, 'cmd_setdd_weekly_10'), Markup.button.callback(`📆 DD Weekly: 15%`, 'cmd_setdd_weekly_15')],
+        [Markup.button.callback('📊 Kembali ke Analytics', 'cmd_analytic'), Markup.button.callback('📱 Menu Utama', 'cmd_menu')]
+      ];
+
+      await sendOrEdit(ctx, msg, false, btns);
+    } catch (e) {
+      console.error("handleSetDD error:", e);
+      await ctx.reply('Terjadi kesalahan saat memuat pengaturan drawdown.');
+    }
+  };
+
+  bot.command(['setdd', 'drawdown', 'setdrawdown'], (ctx) => handleSetDD(ctx));
+  bot.command('dd', (ctx) => handleAnalytic(ctx));
+  bot.action('cmd_open_setdd', (ctx) => handleSetDD(ctx));
+  bot.action(/cmd_setdd_daily_(\d+(\.\d+)?)/, async (ctx: any) => {
+    const val = parseFloat(ctx.match[1]);
+    await handleSetDD(ctx, 'daily', val);
+  });
+  bot.action(/cmd_setdd_weekly_(\d+(\.\d+)?)/, async (ctx: any) => {
+    const val = parseFloat(ctx.match[1]);
+    await handleSetDD(ctx, 'weekly', val);
+  });
+  bot.action('cmd_noop', (ctx: any) => ctx.answerCbQuery('Opsi ini sudah aktif.'));
+
   // COMMAND: /setgoal /goal /target - Configure target balance / equity goal
   const handleSetGoal = async (ctx: any, customValue?: number) => {
     try {
@@ -3256,6 +3598,7 @@ export function initTelegramBot(db: any) {
 
     const keyboard = Markup.inlineKeyboard([
       [Markup.button.callback('📝 Jurnal Baru', 'cmd_start_journal'), Markup.button.callback('🚀 Jurnal Bulk', 'cmd_bulk_prompt')],
+      [Markup.button.callback('📊 Analytics (Harian/Weekly)', 'cmd_analytic'), Markup.button.callback('🛡️ Atur DD (Drawdown)', 'cmd_open_setdd')],
       [Markup.button.callback('📊 Hari Ini (Today)', 'cmd_today'), Markup.button.callback('📈 7 Hari (Weekly)', 'cmd_weekly')],
       [Markup.button.callback('💰 Cek Saldo & Equity', 'cmd_saldo'), Markup.button.callback('🎯 Atur Target Goal', 'cmd_setgoal')],
       [Markup.button.callback('🧮 Kalkulator Lot', 'cmd_lot'), Markup.button.callback('⏳ Trade Running', 'cmd_running')],
@@ -3300,7 +3643,10 @@ export function initTelegramBot(db: any) {
                     `• <code>/running</code> — Lihat daftar trade aktif / pending order\n` +
                     `• <code>/close [id] [win/loss] [pnl]</code> — Tutup trade running\n` +
                     `• <code>/undo</code> — Batalkan / hapus trade terakhir jika salah input\n\n` +
-                    `🎯 <b>2. TARGET GOAL & MONITORING PERFORMA</b>\n` +
+                    `🎯 <b>2. ANALYTICS & MONITORING PERFORMA</b>\n` +
+                    `• <code>/analytic</code> — Ringkasan performa <b>Harian vs Weekly</b> (tersinkron ke dropdown Web)\n` +
+                    `• <code>/setdd [persen]</code> — Atur batas toleransi <b>Drawdown (DD)</b> Harian & Weekly\n` +
+                    `• <code>/dd</code> — Cek status batas dan sisa buffer drawdown\n` +
                     `• <code>/today</code> — Rekap statistik hari ini + <b>visual progress to goal</b>\n` +
                     `• <code>/setgoal [jumlah]</code> — Atur target equity akun (cth: <code>/setgoal 20000</code>)\n` +
                     `• <code>/weekly</code> — Evaluasi performa trading 7 hari terakhir\n` +

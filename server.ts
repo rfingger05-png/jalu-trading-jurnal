@@ -295,6 +295,8 @@ async function initDb() {
     try { await db.execute("ALTER TABLE users ADD COLUMN active_character_id TEXT DEFAULT 'jinwoo_e'"); } catch (e) {}
     try { await db.execute("ALTER TABLE users ADD COLUMN telegram_tag TEXT DEFAULT NULL"); } catch (e) {}
     try { await db.execute("ALTER TABLE users ADD COLUMN target_balance REAL DEFAULT 10800"); } catch (e) {}
+    try { await db.execute("ALTER TABLE users ADD COLUMN analytics_timeframe TEXT DEFAULT 'weekly'"); } catch (e) {}
+    try { await db.execute("ALTER TABLE users ADD COLUMN weekly_dd REAL DEFAULT 10.0"); } catch (e) {}
 
     await db.execute(`
       CREATE TABLE IF NOT EXISTS user_characters (
@@ -544,7 +546,7 @@ app.post("/api/auth/login", async (req, res) => {
 app.get("/api/auth/me", authMiddleware, async (req: any, res) => {
   try {
     const userRes = await db.execute({
-      sql: "SELECT id, username, role, current_mode, currency, default_risk, prop_firm_enabled, prop_firm_balance, prop_firm_daily_dd, prop_firm_max_dd, prop_firm_target, prop_firm_payout_total, initial_balance, myfxbook_session, telegram_id, telegram_tag, coins, active_character_id, target_balance FROM users WHERE id = ?",
+      sql: "SELECT id, username, role, current_mode, currency, default_risk, prop_firm_enabled, prop_firm_balance, prop_firm_daily_dd, prop_firm_max_dd, weekly_dd, analytics_timeframe, prop_firm_target, prop_firm_payout_total, initial_balance, myfxbook_session, telegram_id, telegram_tag, coins, active_character_id, target_balance FROM users WHERE id = ?",
       args: [req.user.id]
     });
     if (userRes.rows.length === 0) return res.status(401).json({ error: "Unauthorized" });
@@ -561,8 +563,10 @@ app.get("/api/auth/me", authMiddleware, async (req: any, res) => {
       initial_balance: user.initial_balance,
       target_balance: user.target_balance ? Number(user.target_balance) : null,
       myfxbook_connected: !!user.myfxbook_session,
-      prop_firm_daily_dd: user.prop_firm_daily_dd || 5,
-      prop_firm_max_dd: user.prop_firm_max_dd || 10,
+      prop_firm_daily_dd: user.prop_firm_daily_dd ? Number(user.prop_firm_daily_dd) : 5,
+      prop_firm_max_dd: user.prop_firm_max_dd ? Number(user.prop_firm_max_dd) : 10,
+      weekly_dd: user.weekly_dd ? Number(user.weekly_dd) : 10,
+      analytics_timeframe: user.analytics_timeframe === 'daily' ? 'daily' : 'weekly',
       prop_firm_target: user.prop_firm_target || 10,
       prop_firm_payout_total: user.prop_firm_payout_total || 0,
       telegram_id: user.telegram_id || null,
@@ -572,6 +576,47 @@ app.get("/api/auth/me", authMiddleware, async (req: any, res) => {
     } });
   } catch (e) {
     console.error(e);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+// Save analytics dropdown mode and DD limits from Web UI
+app.post("/api/user/analytics-settings", authMiddleware, async (req: any, res) => {
+  try {
+    const { analytics_timeframe, prop_firm_daily_dd, prop_firm_max_dd, weekly_dd } = req.body;
+    const cleanTimeframe = analytics_timeframe === 'daily' ? 'daily' : 'weekly';
+    
+    const updates: string[] = ["analytics_timeframe = ?"];
+    const args: any[] = [cleanTimeframe];
+
+    if (prop_firm_daily_dd !== undefined && prop_firm_daily_dd !== null && !isNaN(Number(prop_firm_daily_dd))) {
+      updates.push("prop_firm_daily_dd = ?");
+      args.push(Number(prop_firm_daily_dd));
+    }
+    if (prop_firm_max_dd !== undefined && prop_firm_max_dd !== null && !isNaN(Number(prop_firm_max_dd))) {
+      updates.push("prop_firm_max_dd = ?");
+      args.push(Number(prop_firm_max_dd));
+    }
+    if (weekly_dd !== undefined && weekly_dd !== null && !isNaN(Number(weekly_dd))) {
+      updates.push("weekly_dd = ?");
+      args.push(Number(weekly_dd));
+    }
+
+    args.push(req.user.id);
+    await db.execute({
+      sql: `UPDATE users SET ${updates.join(', ')} WHERE id = ?`,
+      args
+    });
+
+    res.json({
+      success: true,
+      analytics_timeframe: cleanTimeframe,
+      prop_firm_daily_dd: prop_firm_daily_dd ? Number(prop_firm_daily_dd) : undefined,
+      prop_firm_max_dd: prop_firm_max_dd ? Number(prop_firm_max_dd) : undefined,
+      weekly_dd: weekly_dd ? Number(weekly_dd) : undefined
+    });
+  } catch (e) {
+    console.error("Save analytics settings error:", e);
     res.status(500).json({ error: "Server error" });
   }
 });
