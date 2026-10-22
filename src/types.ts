@@ -46,6 +46,7 @@ export type User = {
   telegram_tag?: string;
   default_risk?: number;
   target_balance?: number | null;
+  api_key?: string | null;
   created_at: string;
 };
 

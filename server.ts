@@ -1,5 +1,6 @@
 import dotenv from "dotenv";
 dotenv.config({ override: true });
+import crypto from "crypto";
 import { GoogleGenAI, Type } from "@google/genai";
 import express from "express";
 import { createClient } from "@libsql/client";
@@ -13,6 +14,17 @@ import { getXauusdEconomicNews } from "./src/lib/newsService.js";
 const JWT_SECRET = process.env.JWT_SECRET || 'trading_journal_super_secret_key_123';
 
 const app = express();
+
+// Enable CORS for external websites and integrations
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, Authorization, x-api-key");
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
+  next();
+});
 
 const portArgIndex = process.argv.indexOf("--port");
 const argPort = portArgIndex !== -1 && process.argv[portArgIndex + 1] ? Number(process.argv[portArgIndex + 1]) : null;
@@ -297,6 +309,7 @@ async function initDb() {
     try { await db.execute("ALTER TABLE users ADD COLUMN target_balance REAL DEFAULT 10800"); } catch (e) {}
     try { await db.execute("ALTER TABLE users ADD COLUMN analytics_timeframe TEXT DEFAULT 'weekly'"); } catch (e) {}
     try { await db.execute("ALTER TABLE users ADD COLUMN weekly_dd REAL DEFAULT 10.0"); } catch (e) {}
+    try { await db.execute("ALTER TABLE users ADD COLUMN api_key TEXT DEFAULT NULL"); } catch (e) {}
 
     await db.execute(`
       CREATE TABLE IF NOT EXISTS user_characters (
@@ -546,7 +559,7 @@ app.post("/api/auth/login", async (req, res) => {
 app.get("/api/auth/me", authMiddleware, async (req: any, res) => {
   try {
     const userRes = await db.execute({
-      sql: "SELECT id, username, role, current_mode, currency, default_risk, prop_firm_enabled, prop_firm_balance, prop_firm_daily_dd, prop_firm_max_dd, weekly_dd, analytics_timeframe, prop_firm_target, prop_firm_payout_total, initial_balance, myfxbook_session, telegram_id, telegram_tag, coins, active_character_id, target_balance FROM users WHERE id = ?",
+      sql: "SELECT id, username, role, current_mode, currency, default_risk, prop_firm_enabled, prop_firm_balance, prop_firm_daily_dd, prop_firm_max_dd, weekly_dd, analytics_timeframe, prop_firm_target, prop_firm_payout_total, initial_balance, myfxbook_session, telegram_id, telegram_tag, coins, active_character_id, target_balance, api_key FROM users WHERE id = ?",
       args: [req.user.id]
     });
     if (userRes.rows.length === 0) return res.status(401).json({ error: "Unauthorized" });
@@ -572,7 +585,8 @@ app.get("/api/auth/me", authMiddleware, async (req: any, res) => {
       telegram_id: user.telegram_id || null,
       telegram_tag: user.telegram_tag || null,
       coins: user.coins !== undefined && user.coins !== null ? Number(user.coins) : 250,
-      active_character_id: user.active_character_id || 'jinwoo_e'
+      active_character_id: user.active_character_id || 'jinwoo_e',
+      api_key: user.api_key || null
     } });
   } catch (e) {
     console.error(e);
@@ -618,6 +632,430 @@ app.post("/api/user/analytics-settings", authMiddleware, async (req: any, res) =
   } catch (e) {
     console.error("Save analytics settings error:", e);
     res.status(500).json({ error: "Server error" });
+  }
+});
+
+// ========================================================
+// API KEY MANAGEMENT & EXTERNAL WEBSITE INTEGRATION (V1)
+// ========================================================
+
+// Generate new API Key
+app.post("/api/user/generate-api-key", authMiddleware, async (req: any, res) => {
+  try {
+    const newApiKey = "jalu_live_" + crypto.randomBytes(24).toString("hex");
+    await db.execute({
+      sql: "UPDATE users SET api_key = ? WHERE id = ?",
+      args: [newApiKey, req.user.id]
+    });
+    res.json({ success: true, api_key: newApiKey });
+  } catch (e) {
+    console.error("Generate API key error:", e);
+    res.status(500).json({ error: "Gagal membuat API Key." });
+  }
+});
+
+// Revoke API Key
+app.delete("/api/user/revoke-api-key", authMiddleware, async (req: any, res) => {
+  try {
+    await db.execute({
+      sql: "UPDATE users SET api_key = NULL WHERE id = ?",
+      args: [req.user.id]
+    });
+    res.json({ success: true });
+  } catch (e) {
+    console.error("Revoke API key error:", e);
+    res.status(500).json({ error: "Gagal mencabut API Key." });
+  }
+});
+
+// Authentication middleware for external API requests (Bearer Token / x-api-key)
+const apiKeyAuthMiddleware = async (req: any, res: any, next: any) => {
+  try {
+    let key = req.headers['x-api-key'];
+    if (!key && req.headers.authorization) {
+      const auth = req.headers.authorization;
+      if (auth.startsWith('Bearer ')) {
+        key = auth.substring(7).trim();
+      } else {
+        key = auth.trim();
+      }
+    }
+    if (!key && req.query?.api_key) {
+      key = String(req.query.api_key).trim();
+    }
+
+    if (!key) {
+      return res.status(401).json({
+        success: false,
+        error: "Missing API Key. Provide header 'x-api-key: your_key' or 'Authorization: Bearer your_key'"
+      });
+    }
+
+    const userRes = await db.execute({
+      sql: "SELECT * FROM users WHERE api_key = ?",
+      args: [key]
+    });
+
+    if (userRes.rows.length === 0) {
+      return res.status(401).json({
+        success: false,
+        error: "Invalid or inactive API Key. Please verify your API Key in Settings > Integrasi API"
+      });
+    }
+
+    req.user = userRes.rows[0];
+    next();
+  } catch (e) {
+    console.error("API Key Auth Error:", e);
+    res.status(500).json({ success: false, error: "Authentication system error" });
+  }
+};
+
+// Helper: Calculate accurate account equity & drawdown for external requests
+const calculateUserAccountStats = async (user: any) => {
+  const isProp = !!user.prop_firm_enabled;
+  const initialBal = isProp ? (user.prop_firm_balance || 1000) : (user.initial_balance || 1000);
+
+  const tradesRes = await db.execute({
+    sql: "SELECT realized_pl, result, pips, created_at FROM trades WHERE user_id = ? AND result != 'Pending'",
+    args: [user.id]
+  });
+  const trades = tradesRes.rows;
+
+  let totalPL = 0;
+  let wins = 0;
+  let losses = 0;
+  let totalPips = 0;
+
+  trades.forEach((t: any) => {
+    const pl = Number(t.realized_pl) || 0;
+    totalPL += pl;
+    const res = (t.result || '').toUpperCase();
+    if (res === 'WIN') wins++;
+    else if (res === 'LOSS') losses++;
+    totalPips += (Number(t.pips) || 0);
+  });
+
+  const txRes = await db.execute({
+    sql: "SELECT type, amount FROM transactions WHERE user_id = ?",
+    args: [user.id]
+  });
+  let totalDeposit = 0;
+  let totalWithdraw = 0;
+  txRes.rows.forEach((tx: any) => {
+    if (tx.type === 'deposit') totalDeposit += (tx.amount || 0);
+    if (tx.type === 'withdrawal') totalWithdraw += (tx.amount || 0);
+  });
+
+  let currentEquity = initialBal + totalDeposit - totalWithdraw + totalPL;
+  if (isProp && user.prop_firm_payout_total) {
+    currentEquity -= (user.prop_firm_payout_total || 0);
+  }
+
+  // Daily Drawdown calculation (Today's gross loss)
+  const now = new Date();
+  const todayWibStr = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Jakarta" })).toISOString().split('T')[0];
+  const todayUtcStr = now.toISOString().split('T')[0];
+  let todayLoss = 0;
+  let todayTradesCount = 0;
+  let todayPL = 0;
+
+  trades.forEach((t: any) => {
+    let d = t.created_at || '';
+    if (!d.includes('Z')) d += 'Z';
+    try {
+      const dt = new Date(d);
+      const dtWibStr = new Date(dt.toLocaleString("en-US", { timeZone: "Asia/Jakarta" })).toISOString().split('T')[0];
+      const dtUtcStr = dt.toISOString().split('T')[0];
+      if (dtWibStr === todayWibStr || dtUtcStr === todayUtcStr) {
+        todayTradesCount++;
+        const pl = Number(t.realized_pl) || 0;
+        todayPL += pl;
+        if (pl < 0) todayLoss += Math.abs(pl);
+      }
+    } catch (e) {}
+  });
+
+  const dailyDDPct = user.prop_firm_daily_dd ? Number(user.prop_firm_daily_dd) : 5.0;
+  const dailyMaxLoss = Math.max(25, (initialBal * dailyDDPct) / 100);
+  const dailyDDRemaining = Math.max(0, dailyMaxLoss - todayLoss);
+  const dailyDDUsedPct = dailyMaxLoss > 0 ? (todayLoss / dailyMaxLoss) * 100 : 0;
+
+  const weeklyDDPct = user.prop_firm_max_dd ? Number(user.prop_firm_max_dd) : (user.weekly_dd ? Number(user.weekly_dd) : 10.0);
+  const weeklyMaxLoss = Math.max(50, (initialBal * weeklyDDPct) / 100);
+
+  const targetGoal = user.target_balance ? Number(user.target_balance) : Math.round(initialBal * 1.2);
+
+  const status = todayLoss >= dailyMaxLoss 
+    ? "BREACHED" 
+    : todayLoss >= (dailyMaxLoss * 0.75) 
+    ? "WARNING" 
+    : "SAFE";
+
+  return {
+    initialBal,
+    currentEquity: Number(currentEquity.toFixed(2)),
+    totalPL: Number(totalPL.toFixed(2)),
+    winRate: trades.length > 0 ? Number(((wins / trades.length) * 100).toFixed(1)) : 0,
+    tradesCount: trades.length,
+    wins,
+    losses,
+    totalPips,
+    drawdown: {
+      daily_limit_pct: dailyDDPct,
+      daily_max_loss: Number(dailyMaxLoss.toFixed(2)),
+      today_loss: Number(todayLoss.toFixed(2)),
+      today_remaining_buffer: Number(dailyDDRemaining.toFixed(2)),
+      today_used_pct: Number(dailyDDUsedPct.toFixed(1)),
+      weekly_limit_pct: weeklyDDPct,
+      weekly_max_loss: Number(weeklyMaxLoss.toFixed(2)),
+      status
+    },
+    today: {
+      trades_count: todayTradesCount,
+      realized_pl: Number(todayPL.toFixed(2))
+    },
+    targetGoal,
+    recommendations_for_ai: {
+      allowed_to_trade: todayLoss < dailyMaxLoss,
+      max_recommended_risk_dollar: Number(Math.max(0, Math.min(dailyDDRemaining, (initialBal * (user.default_risk || 2.5)) / 100)).toFixed(2)),
+      default_risk_pct: user.default_risk || 2.5,
+      notes: todayLoss >= dailyMaxLoss 
+        ? "Batas Drawdown Harian telah tercapai. Disarankan kunci posisi (Circuit Breaker) hingga besok." 
+        : `Sisa batas rugi aman hari ini: $${dailyDDRemaining.toFixed(2)}`
+    }
+  };
+};
+
+// 1. External API: GET /api/v1/account-status (Read status for AI Assistant)
+app.get("/api/v1/account-status", apiKeyAuthMiddleware, async (req: any, res) => {
+  try {
+    const stats = await calculateUserAccountStats(req.user);
+    res.json({
+      success: true,
+      user: {
+        id: req.user.id,
+        username: req.user.username,
+        currency: req.user.currency || 'USD',
+        role: req.user.role
+      },
+      account: stats
+    });
+  } catch (e) {
+    console.error("External account-status error:", e);
+    res.status(500).json({ success: false, error: "Failed to calculate account status" });
+  }
+});
+
+// 2. External API: POST /api/v1/validate-trade (Pre-execution validation for AI Money Management)
+app.post("/api/v1/validate-trade", apiKeyAuthMiddleware, async (req: any, res) => {
+  try {
+    const { pair = 'XAUUSD', direction = 'BUY', lot = 0.01, sl_pips, entry_price, sl } = req.body;
+    const stats = await calculateUserAccountStats(req.user);
+
+    let calculatedRisk = 0;
+    const isNano = req.user.currency === 'NANO';
+    const isCent = req.user.currency === 'USC' || isNano;
+    const pipMultiplier = isNano ? 1 : isCent ? 10 : 10; // $10 per pip per 1.00 lot in standard
+
+    let pipsAtRisk = sl_pips;
+    if (!pipsAtRisk && entry_price && sl) {
+      pipsAtRisk = Math.abs(entry_price - sl) * 10;
+    }
+    if (pipsAtRisk && !isNaN(Number(pipsAtRisk))) {
+      calculatedRisk = Number(pipsAtRisk) * Number(lot) * (isNano ? 0.01 : isCent ? 0.1 : 10);
+    } else {
+      // Default estimate based on 30 pips
+      calculatedRisk = 30 * Number(lot) * (isNano ? 0.01 : isCent ? 0.1 : 10);
+    }
+
+    const remainingDD = stats.drawdown.today_remaining_buffer;
+    const equity = stats.currentEquity;
+    const riskPct = equity > 0 ? (calculatedRisk / equity) * 100 : 0;
+
+    let allowed = true;
+    let reason = "APPROVED";
+    let aiFeedback = `Trade ${pair} ${direction} lot ${lot} disetujui. Estimasi risiko $${calculatedRisk.toFixed(2)} (${riskPct.toFixed(1)}%) masih dalam toleransi.`;
+
+    if (!stats.recommendations_for_ai.allowed_to_trade) {
+      allowed = false;
+      reason = "REJECTED_DAILY_DD_EXCEEDED";
+      aiFeedback = `Trade DITOLAK oleh Money Management: Akun sudah mencapai batas Drawdown Harian ($${stats.drawdown.today_loss} / $${stats.drawdown.daily_max_loss}).`;
+    } else if (calculatedRisk > remainingDD) {
+      allowed = false;
+      reason = "REJECTED_EXCEEDS_REMAINING_BUFFER";
+      aiFeedback = `Trade DITOLAK oleh Money Management: Estimasi potensi rugi ($${calculatedRisk.toFixed(2)}) melebihi sisa buffer Drawdown hari ini ($${remainingDD.toFixed(2)}). Perkecil lot Anda!`;
+    } else if (riskPct > 5.0) {
+      allowed = false;
+      reason = "REJECTED_EXCESSIVE_RISK_PERCENTAGE";
+      aiFeedback = `Trade DITOLAK: Risiko posisi ini (${riskPct.toFixed(1)}%) melebihi batas toleransi maksimal 5% per trade.`;
+    }
+
+    res.json({
+      success: true,
+      validation: {
+        allowed,
+        reason,
+        ai_feedback: aiFeedback,
+        estimated_risk_dollar: Number(calculatedRisk.toFixed(2)),
+        estimated_risk_pct: Number(riskPct.toFixed(1)),
+        current_equity: equity,
+        daily_dd_remaining_before: remainingDD,
+        daily_dd_remaining_after: Number(Math.max(0, remainingDD - calculatedRisk).toFixed(2))
+      }
+    });
+  } catch (e) {
+    console.error("External validate-trade error:", e);
+    res.status(500).json({ success: false, error: "Validation processing error" });
+  }
+});
+
+// 3. External API: POST /api/v1/trades (Automated Trade Logging from External Web)
+app.post("/api/v1/trades", apiKeyAuthMiddleware, async (req: any, res) => {
+  try {
+    const { 
+      pair = 'XAUUSD', 
+      direction = 'Buy', 
+      position_size, 
+      lot,
+      entry_price = 0, 
+      sl = 0, 
+      tp = 0, 
+      realized_pl, 
+      pnl,
+      result = 'Pending', 
+      pips,
+      notes = 'Auto-logged from External AI Website', 
+      setup_name = 'AI Money Management',
+      image,
+      image_url,
+      image_before,
+      image_after
+    } = req.body;
+
+    const actualLot = position_size || lot || 0.01;
+    const actualPL = realized_pl !== undefined ? Number(realized_pl) : (pnl !== undefined ? Number(pnl) : 0);
+    let actualResult = result;
+    if (!result || result === 'Pending') {
+      if (actualPL > 0) actualResult = 'WIN';
+      else if (actualPL < 0) actualResult = 'LOSS';
+      else actualResult = 'BE';
+    }
+
+    const isWin = String(actualResult).toUpperCase() === 'WIN';
+    const isNano = req.user.currency === 'NANO';
+    let calculatedPips = pips;
+    if (calculatedPips === undefined || calculatedPips === null) {
+      // Basic pips approximation if not sent
+      if (entry_price > 0 && tp > 0) {
+        calculatedPips = Math.round(Math.abs(entry_price - tp) * 10);
+        if (!isWin && calculatedPips > 0) calculatedPips = -calculatedPips;
+      } else {
+        const pipVal = actualLot * (isNano ? 0.01 : 10);
+        calculatedPips = pipVal > 0 ? Math.round(actualPL / pipVal) : 0;
+      }
+    }
+
+    const finalImage = image || image_url || null;
+
+    const ins = await db.execute({
+      sql: `INSERT INTO trades (
+        user_id, pair, direction, setup_name, entry_price, sl, tp, 
+        account_balance, risk_percentage, position_size, result, realized_pl, pips,
+        image, image_url, image_before, image_after, has_image, notes, run_mode, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+      args: [
+        req.user.id,
+        pair.toUpperCase(),
+        direction.toUpperCase() === 'BUY' ? 'Buy' : 'Sell',
+        setup_name,
+        Number(entry_price) || 0,
+        Number(sl) || 0,
+        Number(tp) || 0,
+        req.user.default_risk || 2.5,
+        Number(actualLot),
+        actualResult,
+        actualPL,
+        Number(calculatedPips) || 0,
+        finalImage,
+        finalImage,
+        image_before || null,
+        image_after || null,
+        finalImage ? 1 : 0,
+        notes,
+        'live'
+      ]
+    });
+
+    const newTradeId = ins.lastInsertRowid !== undefined && ins.lastInsertRowid !== null ? Number(ins.lastInsertRowid) : 0;
+    const updatedStats = await calculateUserAccountStats(req.user);
+
+    // Send instant Telegram notification if user has linked Telegram!
+    if (bot && req.user.telegram_id) {
+      try {
+        const signPL = actualPL >= 0 ? '+' : '';
+        const sym = req.user.currency === 'IDR' ? 'Rp ' : '$';
+        const msg = 
+          `🤖 <b>[TRADE DARI WEB AI EKSTERNAL]</b>\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `🆔 <b>ID:</b> #${newTradeId} | 👤 <b>Akun:</b> <code>${req.user.username}</code>\n` +
+          `📈 <b>Pair:</b> <b>${pair.toUpperCase()}</b> (${direction.toUpperCase()})\n` +
+          `📦 <b>Lot:</b> ${actualLot}\n` +
+          `🏆 <b>Status:</b> <b>${actualResult}</b>\n` +
+          `💰 <b>P/L:</b> <b>${signPL}${sym}${actualPL.toFixed(2)}</b> (${calculatedPips >= 0 ? '+' : ''}${calculatedPips} Pips)\n` +
+          `🧠 <b>Catatan:</b> <i>${notes}</i>\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `⚡ <b>Equity Terkini:</b> <b>${sym}${updatedStats.currentEquity.toFixed(2)}</b>\n` +
+          `🛡️ <b>Sisa Buffer DD:</b> <b>${sym}${updatedStats.drawdown.today_remaining_buffer.toFixed(2)}</b>`;
+        
+        await bot.telegram.sendMessage(req.user.telegram_id, msg, { parse_mode: 'HTML' }).catch(() => {});
+      } catch (tgErr) {
+        console.error("Failed to push Telegram alert for external trade:", tgErr);
+      }
+    }
+
+    res.json({
+      success: true,
+      trade_id: newTradeId,
+      message: "Trade successfully recorded in journal and synced!",
+      trade: {
+        id: newTradeId,
+        pair: pair.toUpperCase(),
+        direction,
+        lot: actualLot,
+        result: actualResult,
+        realized_pl: actualPL,
+        pips: calculatedPips,
+        notes
+      },
+      updated_account: {
+        current_equity: updatedStats.currentEquity,
+        drawdown_status: updatedStats.drawdown.status,
+        today_remaining_buffer: updatedStats.drawdown.today_remaining_buffer
+      }
+    });
+  } catch (e) {
+    console.error("External trade insert error:", e);
+    res.status(500).json({ success: false, error: "Failed to save trade to journal" });
+  }
+});
+
+// 4. External API: GET /api/v1/trades (Read recent trades)
+app.get("/api/v1/trades", apiKeyAuthMiddleware, async (req: any, res) => {
+  try {
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string, 10) || 20));
+    const tradesRes = await db.execute({
+      sql: "SELECT id, pair, direction, position_size, entry_price, sl, tp, result, realized_pl, pips, setup_name, notes, created_at FROM trades WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+      args: [req.user.id, limit]
+    });
+    res.json({
+      success: true,
+      count: tradesRes.rows.length,
+      trades: tradesRes.rows
+    });
+  } catch (e) {
+    console.error("External get trades error:", e);
+    res.status(500).json({ success: false, error: "Failed to retrieve trades" });
   }
 });
 

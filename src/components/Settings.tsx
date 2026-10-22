@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { User } from '../types';
-import { Check, AlertCircle, Trash2, Shield, Sliders, Send, Moon, Sun, Copy } from 'lucide-react';
+import { Check, AlertCircle, Trash2, Shield, Sliders, Send, Moon, Sun, Copy, Key, Eye, EyeOff, RefreshCw, Zap, Code, ExternalLink } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { authFetch } from '../utils';
 
@@ -35,6 +35,16 @@ export default function Settings({ user, onUserUpdate, onLocalUpdate, onLogout }
 
   const [linkCopied, setLinkCopied] = useState(false);
   const [botStatus, setBotStatus] = useState<{ configured: boolean; authenticated: boolean; username: string | null; error: string | null } | null>(null);
+
+  // API Key & External Web Integration state
+  const [apiKey, setApiKey] = useState<string | null>(user?.api_key || null);
+  const [showApiKey, setShowApiKey] = useState<boolean>(false);
+  const [isGeneratingKey, setIsGeneratingKey] = useState<boolean>(false);
+  const [apiKeyCopied, setApiKeyCopied] = useState<boolean>(false);
+  const [testApiLoading, setTestApiLoading] = useState<boolean>(false);
+  const [testApiResult, setTestApiResult] = useState<any | null>(null);
+  const [testApiError, setTestApiError] = useState<string | null>(null);
+  const [activeCodeTab, setActiveCodeTab] = useState<'fetch' | 'curl'>('fetch');
 
   // Dark mode
   const [darkMode, setDarkMode] = useState(() => {
@@ -92,7 +102,66 @@ export default function Settings({ user, onUserUpdate, onLocalUpdate, onLogout }
     }
     if (user?.telegram_tag !== undefined) setTelegramTag(user.telegram_tag || '');
     if (user?.telegram_id !== undefined) setTelegramIdInput(user.telegram_id || '');
-  }, [user?.currency, user?.initial_balance, user?.telegram_tag, user?.telegram_id]);
+    if (user?.api_key !== undefined) setApiKey(user.api_key || null);
+  }, [user?.currency, user?.initial_balance, user?.telegram_tag, user?.telegram_id, user?.api_key]);
+
+  const handleGenerateApiKey = async () => {
+    setIsGeneratingKey(true);
+    setError(null);
+    try {
+      const res = await authFetch('/api/user/generate-api-key', { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        setApiKey(data.api_key);
+        setShowApiKey(true);
+        if (onLocalUpdate) onLocalUpdate({ api_key: data.api_key });
+        onUserUpdate();
+      } else {
+        setError('Gagal membuat API Key baru.');
+      }
+    } catch {
+      setError('Terjadi kesalahan jaringan saat membuat API Key.');
+    } finally {
+      setIsGeneratingKey(false);
+    }
+  };
+
+  const handleRevokeApiKey = async () => {
+    if (!confirm('Apakah Anda yakin ingin mencabut (menghapus) API Key ini? Web luar yang terhubung tidak akan bisa mengakses lagi.')) return;
+    try {
+      const res = await authFetch('/api/user/revoke-api-key', { method: 'DELETE' });
+      if (res.ok) {
+        setApiKey(null);
+        setTestApiResult(null);
+        if (onLocalUpdate) onLocalUpdate({ api_key: null });
+        onUserUpdate();
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleTestApi = async () => {
+    if (!apiKey) return;
+    setTestApiLoading(true);
+    setTestApiResult(null);
+    setTestApiError(null);
+    try {
+      const res = await fetch('/api/v1/account-status', {
+        headers: { 'Authorization': `Bearer ${apiKey}` }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setTestApiResult(data);
+      } else {
+        setTestApiError(data.error || 'Autentikasi API Key gagal.');
+      }
+    } catch (e: any) {
+      setTestApiError(e?.message || 'Gagal menghubungi server.');
+    } finally {
+      setTestApiLoading(false);
+    }
+  };
 
   const handleSaveTelegramTag = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -443,7 +512,280 @@ export default function Settings({ user, onUserUpdate, onLocalUpdate, onLogout }
           </div>
         </div>
 
-        {/* Section 5: Data Management / Reset */}
+        {/* Section 5: Integrasi API & Web Baru (AI Money Management) */}
+        <div className="bg-[#1A1A1A] rounded-xl border border-[#2D2D2D] p-5 sm:p-6 space-y-5 shadow-xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#262626]">
+            <div>
+              <div className="flex items-center gap-2">
+                <Key size={16} className="text-[#FF3333]" />
+                <h2 className="text-sm font-bold uppercase tracking-wider text-white font-mono">
+                  Integrasi API &amp; Web Baru (AI Money Management)
+                </h2>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-bold">
+                  REST API v1
+                </span>
+              </div>
+              <p className="text-xs text-[#A3A3A3] mt-0.5 font-mono">
+                Hubungkan web baru Anda dengan database jurnal ini. Web baru Anda bisa membaca saldo, mengecek toleransi Drawdown secara realtime, dan mencatat trade otomatis.
+              </p>
+            </div>
+          </div>
+
+          {/* API Key Box */}
+          <div className="space-y-3">
+            <label className="text-[11px] font-mono uppercase tracking-wider text-[#A3A3A3] font-bold block">
+              Personal Access API Key
+            </label>
+
+            {apiKey ? (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <div className="relative flex-1">
+                    <input
+                      type={showApiKey ? "text" : "password"}
+                      readOnly
+                      value={apiKey}
+                      className="w-full text-xs px-3.5 py-2.5 border border-[#333333] rounded-lg bg-[#111111] font-mono text-white tracking-wider outline-hidden select-all"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowApiKey(!showApiKey)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-[#777777] hover:text-white transition-colors cursor-pointer"
+                      title={showApiKey ? "Sembunyikan" : "Tampilkan"}
+                    >
+                      {showApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(apiKey);
+                      setApiKeyCopied(true);
+                      setTimeout(() => setApiKeyCopied(false), 2000);
+                    }}
+                    className="px-3.5 py-2.5 bg-[#262626] hover:bg-[#333333] text-white text-xs font-mono font-bold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer shrink-0"
+                  >
+                    <Copy size={13} />
+                    <span>{apiKeyCopied ? 'Tersalin!' : 'Copy Key'}</span>
+                  </button>
+
+                  <button
+                    onClick={handleTestApi}
+                    disabled={testApiLoading}
+                    className="px-3.5 py-2.5 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 text-emerald-400 text-xs font-mono font-bold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer shrink-0 disabled:opacity-50"
+                  >
+                    <Zap size={13} />
+                    <span>{testApiLoading ? 'Menguji...' : 'Test Koneksi'}</span>
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between text-[11px] font-mono text-[#777777] pt-1">
+                  <span>Simpan API Key ini di file <code className="text-white">.env</code> web baru Anda. Jangan bagikan ke orang lain.</span>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={handleGenerateApiKey}
+                      disabled={isGeneratingKey}
+                      className="text-[#A3A3A3] hover:text-white flex items-center gap-1 cursor-pointer transition-colors"
+                    >
+                      <RefreshCw size={11} className={isGeneratingKey ? "animate-spin" : ""} />
+                      <span>Buat Ulang</span>
+                    </button>
+                    <button
+                      onClick={handleRevokeApiKey}
+                      className="text-[#FF3333] hover:text-red-400 cursor-pointer transition-colors"
+                    >
+                      Cabut Kunci
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="p-4 bg-[#121212] border border-dashed border-[#333333] rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 font-mono">
+                <div>
+                  <span className="text-xs font-bold text-white block">Belum ada API Key aktif</span>
+                  <span className="text-[11px] text-[#A3A3A3]">
+                    Generate API Key untuk mengizinkan web AI eksternal Anda mengakses database jurnal ini.
+                  </span>
+                </div>
+                <button
+                  onClick={handleGenerateApiKey}
+                  disabled={isGeneratingKey}
+                  className="px-4 py-2 bg-[#FF3333] hover:bg-[#e62e2e] text-white text-xs font-bold rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50 shrink-0"
+                >
+                  <Key size={13} />
+                  <span>{isGeneratingKey ? 'Membuat...' : 'Generate API Key'}</span>
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Test API Live Response Box */}
+          {testApiResult && (
+            <div className="bg-[#0D1811] border border-emerald-500/40 rounded-xl p-4 font-mono text-xs space-y-2.5">
+              <div className="flex items-center justify-between text-emerald-400 font-bold">
+                <div className="flex items-center gap-1.5">
+                  <Check size={14} />
+                  <span>Koneksi API Berhasil! (HTTP 200 OK)</span>
+                </div>
+                <span className="text-[10px] text-emerald-500/80">GET /api/v1/account-status</span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] pt-1 border-t border-emerald-500/20 text-white">
+                <div>
+                  <span className="text-[#888888] block text-[10px]">Equity Terkini:</span>
+                  <strong className="text-white">${testApiResult.account?.current_equity}</strong>
+                </div>
+                <div>
+                  <span className="text-[#888888] block text-[10px]">Status Drawdown:</span>
+                  <strong className={cn(
+                    testApiResult.account?.drawdown?.status === 'SAFE' ? "text-emerald-400" : "text-[#FF3333]"
+                  )}>
+                    {testApiResult.account?.drawdown?.status}
+                  </strong>
+                </div>
+                <div>
+                  <span className="text-[#888888] block text-[10px]">Sisa Buffer DD:</span>
+                  <strong className="text-white">${testApiResult.account?.drawdown?.today_remaining_buffer}</strong>
+                </div>
+                <div>
+                  <span className="text-[#888888] block text-[10px]">Izin Buka Posisi:</span>
+                  <strong className={cn(
+                    testApiResult.account?.recommendations_for_ai?.allowed_to_trade ? "text-emerald-400" : "text-[#FF3333]"
+                  )}>
+                    {testApiResult.account?.recommendations_for_ai?.allowed_to_trade ? "DIIZINKAN" : "DITOLAK"}
+                  </strong>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {testApiError && (
+            <div className="bg-[#201010] border border-[#FF3333]/40 rounded-xl p-3 font-mono text-xs text-[#FF3333] flex items-center gap-2">
+              <AlertCircle size={14} />
+              <span>Gagal menguji API: {testApiError}</span>
+            </div>
+          )}
+
+          {/* Quick API Documentation & Endpoints */}
+          <div className="space-y-3 pt-2 border-t border-[#262626] font-mono">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-xs font-bold text-white uppercase">
+                <Code size={14} className="text-[#FF3333]" />
+                <span>Dokumentasi Endpoint &amp; Contoh Kode</span>
+              </div>
+              <div className="flex bg-[#121212] border border-[#2D2D2D] rounded-lg p-0.5 text-[11px]">
+                <button
+                  type="button"
+                  onClick={() => setActiveCodeTab('fetch')}
+                  className={cn(
+                    "px-2.5 py-1 rounded font-bold transition-colors cursor-pointer",
+                    activeCodeTab === 'fetch' ? "bg-[#262626] text-white" : "text-[#777777] hover:text-white"
+                  )}
+                >
+                  JavaScript (Fetch)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveCodeTab('curl')}
+                  className={cn(
+                    "px-2.5 py-1 rounded font-bold transition-colors cursor-pointer",
+                    activeCodeTab === 'curl' ? "bg-[#262626] text-white" : "text-[#777777] hover:text-white"
+                  )}
+                >
+                  cURL
+                </button>
+              </div>
+            </div>
+
+            {/* Endpoints List */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-xs">
+              <div className="p-3 rounded-lg bg-[#121212] border border-[#262626] space-y-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-400 font-bold text-[9px]">GET</span>
+                  <span className="text-white font-bold text-[11px]">/api/v1/account-status</span>
+                </div>
+                <p className="text-[11px] text-[#A3A3A3] leading-relaxed">
+                  Baca saldo, equity, status DD, dan rekomendasi AI apakah boleh trading.
+                </p>
+              </div>
+
+              <div className="p-3 rounded-lg bg-[#121212] border border-[#262626] space-y-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400 font-bold text-[9px]">POST</span>
+                  <span className="text-white font-bold text-[11px]">/api/v1/validate-trade</span>
+                </div>
+                <p className="text-[11px] text-[#A3A3A3] leading-relaxed">
+                  Cek lot &amp; SL sebelum open posisi apakah melanggar batas Drawdown.
+                </p>
+              </div>
+
+              <div className="p-3 rounded-lg bg-[#121212] border border-[#262626] space-y-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-bold text-[9px]">POST</span>
+                  <span className="text-white font-bold text-[11px]">/api/v1/trades</span>
+                </div>
+                <p className="text-[11px] text-[#A3A3A3] leading-relaxed">
+                  Kirim &amp; simpan hasil trade otomatis ke jurnal + notifikasi Telegram.
+                </p>
+              </div>
+            </div>
+
+            {/* Code Snippet Box */}
+            <div className="relative rounded-lg bg-[#0C0C0C] border border-[#262626] p-3 text-[11px] overflow-x-auto">
+              <pre className="text-white leading-relaxed">
+                {activeCodeTab === 'fetch' ? (
+`// 1. Ambil status akun & sisa drawdown
+const res = await fetch("${window.location.origin}/api/v1/account-status", {
+  headers: { "Authorization": "Bearer ${apiKey || 'YOUR_API_KEY'}" }
+});
+const { account } = await res.json();
+console.log("Sisa buffer DD:", account.drawdown.today_remaining_buffer);
+
+// 2. Simpan trade otomatis dari web AI baru
+await fetch("${window.location.origin}/api/v1/trades", {
+  method: "POST",
+  headers: {
+    "Authorization": "Bearer ${apiKey || 'YOUR_API_KEY'}",
+    "Content-Type": "application/json"
+  },
+  body: JSON.stringify({
+    pair: "XAUUSD",
+    direction: "BUY",
+    lot: 0.05,
+    entry_price: 2720.50,
+    sl: 2715.00,
+    tp: 2732.00,
+    realized_pl: 125.00,
+    result: "WIN",
+    notes: "Trade tervalidasi AI Money Management"
+  })
+});`
+                ) : (
+`# 1. Cek status akun & sisa drawdown
+curl -X GET "${window.location.origin}/api/v1/account-status" \\
+  -H "Authorization: Bearer ${apiKey || 'YOUR_API_KEY'}"
+
+# 2. Catat trade otomatis
+curl -X POST "${window.location.origin}/api/v1/trades" \\
+  -H "Authorization: Bearer ${apiKey || 'YOUR_API_KEY'}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "pair": "XAUUSD",
+    "direction": "BUY",
+    "lot": 0.05,
+    "entry_price": 2720.50,
+    "sl": 2715.00,
+    "tp": 2732.00,
+    "realized_pl": 125.00,
+    "result": "WIN",
+    "notes": "Trade tervalidasi AI"
+  }'`
+                )}
+              </pre>
+            </div>
+          </div>
+        </div>
+
+        {/* Section 6: Data Management / Reset */}
         <div className="bg-[#1A1A1A] rounded-xl border border-[#FF3333]/30 p-5 sm:p-6 space-y-4 shadow-xs">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
