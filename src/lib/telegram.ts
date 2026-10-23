@@ -49,34 +49,30 @@ const sendOrEdit = async (ctx: any, msg: string, useBackButton: boolean = false,
   }
 };
 
-// Calculate pips for trade accurately (Gold: 1 point / $1.00 = 10 pips, 1 pip = 0.10 price move = $10 / standard lot)
-export function calculatePips(pair: string, entry: number, exitPrice: number, pl: number, lot: number, isWin: boolean, isNano: boolean = false): number {
+// Calculate pips for trade accurately (Gold XAUUSD: $1.00 move = 100 pips / 0.01 = 1 pip)
+export function calculatePips(
+  pair: string,
+  entry: number,
+  exitPrice: number,
+  pl: number,
+  lot: number,
+  isWin: boolean,
+  isNano: boolean = false
+): number {
   const p = (pair || 'XAUUSD').toUpperCase();
-  const safeLot = lot > 0 ? lot : 0.1;
+  const safeLot = lot > 0 ? lot : 0.01;
 
-  // 1. Direct price difference (if entry & exit/tp are given)
-  if (entry > 0 && exitPrice > 0 && Math.abs(exitPrice - entry) > 0) {
-    let multiplier = 10; // XAUUSD: 1 point ($1.00 move) = 10 pips, 0.10 move = 1 pip
-    if (p.includes('JPY')) multiplier = 100;
-    else if (p.includes('EUR') || p.includes('GBP') || p.includes('AUD') || p.includes('NZD') || p.includes('CAD') || p.includes('CHF') || (p.includes('USD') && !p.includes('XAU') && !p.includes('BTC') && !p.includes('ETH'))) {
-      multiplier = 10000;
-    } else if (p.includes('BTC') || p.includes('ETH')) multiplier = 1;
-
-    const diff = Math.round(Math.abs(exitPrice - entry) * multiplier);
-    if (diff > 0 && diff < 50000) return isWin ? diff : -diff;
-  }
-
-  // 2. Fallback using Realized P&L & lot size:
-  // Standard Pip value for 1.00 Lot:
-  // - Gold (XAUUSD): 1 pip = 0.10 move = $10 per 1.00 standard lot (100 oz contract)
-  // - Major Forex (EURUSD, GBPUSD, etc.): 1 pip = 0.0001 = $10 per 1.00 standard lot
-  // - JPY pairs: 1 pip = 0.01 = ~$8.5 - $10 per 1.00 lot
-  // - Nano account: Pip value is 1/10th of standard / cent (1¢ / $0.01 per lot)
-  // Formula: Pips = P/L / (Lot Size * Pip Value per 1.00 Lot)
-  // Example: On Nano, 4 cent profit with 0.04 lot => 4 / (0.04 * 1) = 100 pips!
-  // Example: On Standard/Cent, 40 profit with 0.04 lot => 40 / (0.04 * 10) = 100 pips!
+  // 1. If Realized P&L is explicitly provided (!== 0), calculate directly from actual Realized P&L:
+  // Standard Pip Value per 1.00 Lot:
+  // - NANO Account: 1 pip = 1¢ ($0.01) per lot.
+  //   Formula: Pips = P/L (in cents) / (Lot * 1¢)
+  //   Example: 61.31¢ profit on 0.61 lot => 61.31 / (0.61 * 1) = 100.5 Pips!
+  // - CENT (USC) Account: 1 pip = 10¢ ($0.10) per lot.
+  //   Formula: Pips = P/L (in cents) / (Lot * 10¢)
+  // - STANDARD (USD) Account: 1 pip = $10.00 per lot for Gold & major forex.
+  //   Formula: Pips = P/L (in dollars) / (Lot * $10)
   if (pl !== 0 && safeLot > 0) {
-    let pipValuePerLot = isNano ? 1 : 10; // Nano: 1¢ per lot | Standard/Cent: $10 / 10¢ per lot
+    let pipValuePerLot = isNano ? 1 : 10;
     if (p.includes('BTC') || p.includes('ETH')) {
       pipValuePerLot = isNano ? 0.1 : 1;
     } else if (p.includes('JPY')) {
@@ -85,11 +81,24 @@ export function calculatePips(pair: string, entry: number, exitPrice: number, pl
 
     const pipWorth = safeLot * pipValuePerLot;
     if (pipWorth > 0) {
-      const calculatedPips = Math.round(Math.abs(pl) / pipWorth);
+      const calculatedPips = Math.round((Math.abs(pl) / pipWorth) * 10) / 10;
       if (calculatedPips > 0 && calculatedPips < 50000) {
         return pl >= 0 ? calculatedPips : -calculatedPips;
       }
     }
+  }
+
+  // 2. Direct price difference (if entry & exit price are given)
+  // For XAUUSD (Gold): In MT4/MT5 brokers (Exness/XM/OctaFX), $1.00 price move = 100 pips (0.01 price move = 1 pip)
+  if (entry > 0 && exitPrice > 0 && Math.abs(exitPrice - entry) > 0) {
+    let multiplier = 100; // XAUUSD: 1.00 move = 100 pips, 0.01 = 1 pip
+    if (p.includes('JPY')) multiplier = 100;
+    else if (p.includes('EUR') || p.includes('GBP') || p.includes('AUD') || p.includes('NZD') || p.includes('CAD') || p.includes('CHF') || (p.includes('USD') && !p.includes('XAU') && !p.includes('BTC') && !p.includes('ETH'))) {
+      multiplier = 10000;
+    } else if (p.includes('BTC') || p.includes('ETH')) multiplier = 1;
+
+    const diff = Math.round(Math.abs(exitPrice - entry) * multiplier * 10) / 10;
+    if (diff > 0 && diff < 50000) return isWin ? diff : -diff;
   }
 
   return Math.round(pl);
@@ -293,7 +302,7 @@ export function normalizeTradingViewUrl(url: string): string {
 
 // Interactive Journaling Session per Telegram ID (Step-by-Step 1 per 1)
 interface JournalSession {
-  step: 'direction' | 'lot' | 'entry' | 'result' | 'pnl' | 'time' | 'image_before' | 'image_after' | 'notes';
+  step: 'direction' | 'lot' | 'entry' | 'sl' | 'tp' | 'open_time' | 'notes' | 'position_status' | 'image_before_running' | 'result' | 'pnl' | 'close_time' | 'close_notes' | 'image_before' | 'image_after';
   pair: string;
   direction?: 'BUY' | 'SELL';
   lot?: number;
@@ -303,15 +312,38 @@ interface JournalSession {
   result?: 'WIN' | 'LOSS' | 'BE' | 'Pending';
   pnl?: number;
   setup: string;
-  trade_time?: string;
+  trade_time?: string;  // Jam Buka (Open Time)
+  close_time?: string;  // Jam Tutup (Close Time)
   session?: string;
   image_before?: string;
   image_after?: string;
   image?: string;
-  notes?: string;
+  notes?: string;       // Alasan Buka / Entry Reason
+  close_notes?: string; // Alasan Tutup / Exit Reason
   timestamp: number;
 }
 const journalSessions = new Map<string, JournalSession>();
+
+// Interactive Trade Close Session (/closed step-by-step 1 per 1)
+interface CloseSession {
+  step: 'result' | 'pnl' | 'close_time' | 'close_notes' | 'image_after';
+  tradeId: number;
+  pair: string;
+  direction: 'BUY' | 'SELL';
+  lot: number;
+  entry: number;
+  sl: number;
+  tp: number;
+  result?: 'WIN' | 'LOSS' | 'BE';
+  pnl?: number;
+  open_time?: string;
+  close_time?: string;  // Jam Tutup
+  close_notes?: string; // Alasan Tutup
+  image_after?: string;
+  notes?: string;
+  timestamp: number;
+}
+const closeSessions = new Map<string, CloseSession>();
 const pendingPhotos = new Map<string, { image: string; timestamp: number }>();
 const recentBulkBatches = new Map<string, { tradeIds: number[]; userId: number; timestamp: number }>();
 
@@ -1047,11 +1079,11 @@ export function initTelegramBot(db: any) {
     session.timestamp = Date.now();
 
     const dirBadge = session.direction === 'BUY' ? '🟢 BUY' : '🔴 SELL';
-    const msg = `📝 <b>JURNAL TRADE XAUUSD (Langkah 3/7 - Harga Entry)</b>\n` +
+    const msg = `📝 <b>JURNAL TRADE XAUUSD (Langkah 3/6 - Harga Entry)</b>\n` +
                 `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
                 `📈 <b>XAUUSD</b> (${dirBadge}) | Lot: <b>${lot}</b>\n\n` +
                 `Ketik harga <b>Entry</b> Anda di chat (cth: <code>2650.50</code>):\n` +
-                `<i>Atau klik tombol lewati jika tidak ingin mencatat harga entry.</i>`;
+                `<i>Atau klik tombol lewati jika open market atau tanpa harga entry.</i>`;
 
     const skipKeyboard = [
       [Markup.button.callback('⏩ Lewati Entry Price', 'js_skip_entry')],
@@ -1061,7 +1093,136 @@ export function initTelegramBot(db: any) {
     await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: skipKeyboard } }).catch(() => ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: skipKeyboard } }));
   });
 
-  // Wizard Action: Skip Entry
+  // Step 4: Stop Loss (SL) Step
+  const promptSlStep = async (ctx: any, session: JournalSession) => {
+    session.step = 'sl';
+    session.timestamp = Date.now();
+
+    const dirBadge = session.direction === 'BUY' ? '🟢 BUY' : '🔴 SELL';
+    const msg = `🛑 <b>HARGA STOP LOSS / SL (Langkah 4/6)</b>\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `📈 <b>XAUUSD</b> (${dirBadge}) | Lot: <b>${session.lot}</b>\n` +
+                `🎯 Entry: <b>${session.entry && session.entry > 0 ? session.entry : 'Market Price'}</b>\n\n` +
+                `Ketik harga <b>Stop Loss (SL)</b> Anda di chat (cth: <code>2645.00</code>):\n` +
+                `<i>Atau klik tombol lewati jika open tanpa SL.</i>`;
+
+    const slKeyboard = [
+      [Markup.button.callback('⏩ Lewati SL', 'js_skip_sl')],
+      [Markup.button.callback('❌ Batalkan', 'cmd_cancel_journal')]
+    ];
+
+    if (ctx.callbackQuery) {
+      await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: slKeyboard } }).catch(() => ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: slKeyboard } }));
+    } else {
+      await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: slKeyboard } });
+    }
+  };
+
+  // Step 5: Take Profit (TP) Step
+  const promptTpStep = async (ctx: any, session: JournalSession) => {
+    session.step = 'tp';
+    session.timestamp = Date.now();
+
+    const dirBadge = session.direction === 'BUY' ? '🟢 BUY' : '🔴 SELL';
+    const msg = `🎯 <b>HARGA TAKE PROFIT / TP (Langkah 5/8)</b>\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `📈 <b>XAUUSD</b> (${dirBadge}) | Lot: <b>${session.lot}</b>\n` +
+                `🎯 Entry: <b>${session.entry && session.entry > 0 ? session.entry : 'Market'}</b> | 🛑 SL: <b>${session.sl && session.sl > 0 ? session.sl : 'Tanpa SL'}</b>\n\n` +
+                `Ketik harga <b>Take Profit (TP)</b> Anda di chat (cth: <code>2665.00</code>):\n` +
+                `<i>Atau klik tombol lewati jika open tanpa TP.</i>`;
+
+    const tpKeyboard = [
+      [Markup.button.callback('⏩ Lewati TP', 'js_skip_tp')],
+      [Markup.button.callback('❌ Batalkan', 'cmd_cancel_journal')]
+    ];
+
+    if (ctx.callbackQuery) {
+      await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: tpKeyboard } }).catch(() => ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: tpKeyboard } }));
+    } else {
+      await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: tpKeyboard } });
+    }
+  };
+
+  // Step 6: Jam Buka / Open Time Step (WIB)
+  const promptOpenTimeStep = async (ctx: any, session: JournalSession) => {
+    session.step = 'open_time';
+    session.timestamp = Date.now();
+
+    const nowWib = getWibTimeAndSession();
+    const dirBadge = session.direction === 'BUY' ? '🟢 BUY' : '🔴 SELL';
+    const msg = `⏰ <b>JAM BUKA / ENTRY TRADE (Langkah 6/8)</b>\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `📈 <b>XAUUSD</b> (${dirBadge}) | Lot: <b>${session.lot}</b>\n` +
+                `🕒 Waktu saat ini: <b>${nowWib.timeStr} WIB</b> (${nowWib.sessionName})\n\n` +
+                `Pilih tombol di bawah untuk menggunakan jam sekarang,\n` +
+                `atau ketik jam buka manual di chat (format <i>HH:mm</i>, cth: <code>09:15</code>):`;
+
+    const openTimeKeyboard = [
+      [Markup.button.callback(`⏰ Gunakan Jam Sekarang (${nowWib.timeStr} WIB)`, 'js_open_time_now')],
+      [Markup.button.callback('❌ Batalkan Jurnal', 'cmd_cancel_journal')]
+    ];
+
+    if (ctx.callbackQuery) {
+      await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: openTimeKeyboard } }).catch(() => ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: openTimeKeyboard } }));
+    } else {
+      await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: openTimeKeyboard } });
+    }
+  };
+
+  // Step 7: Alasan Entry / Setup Reason Step
+  const promptOpenNotesStep = async (ctx: any, session: JournalSession) => {
+    session.step = 'notes';
+    session.timestamp = Date.now();
+
+    const dirBadge = session.direction === 'BUY' ? '🟢 BUY' : '🔴 SELL';
+    const msg = `📝 <b>ALASAN ENTRY / SETUP TRADE (Langkah 7/8)</b>\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `📈 <b>XAUUSD</b> (${dirBadge}) | Jam Buka: <b>${session.trade_time || 'Sekarang'} WIB</b>\n\n` +
+                `Ketik <b>alasan open posisi</b> atau konfirmasi setup di chat\n` +
+                `(cth: <i>Reject SnR H4 + Konfirmasi Candle M15</i>):\n\n` +
+                `<i>Atau klik tombol lewati jika tidak ingin mencantumkan alasan:</i>`;
+
+    const openNotesKeyboard = [
+      [Markup.button.callback('⏩ Lewati Alasan Entry', 'js_skip_open_notes')],
+      [Markup.button.callback('❌ Batalkan Jurnal', 'cmd_cancel_journal')]
+    ];
+
+    if (ctx.callbackQuery) {
+      await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: openNotesKeyboard } }).catch(() => ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: openNotesKeyboard } }));
+    } else {
+      await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: openNotesKeyboard } });
+    }
+  };
+
+  // Step 8: Position Status Step (Running / Open vs Already Closed)
+  const promptPositionStatusStep = async (ctx: any, session: JournalSession) => {
+    session.step = 'position_status';
+    session.timestamp = Date.now();
+
+    const dirBadge = session.direction === 'BUY' ? '🟢 BUY' : '🔴 SELL';
+    const msg = `⚡ <b>STATUS POSISI SAAT INI (Langkah 8/8)</b>\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `📈 <b>XAUUSD</b> (${dirBadge}) | Lot: <b>${session.lot}</b>\n` +
+                `🎯 Entry: <b>${session.entry && session.entry > 0 ? session.entry : 'Market'}</b> | ⏰ Jam: <b>${session.trade_time || 'Sekarang'} WIB</b>\n` +
+                `🛑 SL: <b>${session.sl && session.sl > 0 ? session.sl : 'Tanpa SL'}</b> | 🎯 TP: <b>${session.tp && session.tp > 0 ? session.tp : 'Tanpa TP'}</b>\n` +
+                `📝 Alasan: <i>${session.notes || 'Tanpa catatan khusus'}</i>\n\n` +
+                `Apakah posisi ini <b>masih berjalan (Running) sekarang</b>,\n` +
+                `atau <b>sudah selesai (Closed)</b>?`;
+
+    const statusKeyboard = [
+      [Markup.button.callback('⏳ Masih Running (Buka Posisi)', 'js_pos_running')],
+      [Markup.button.callback('✅ Sudah Closed (Input Hasil)', 'js_pos_closed')],
+      [Markup.button.callback('❌ Batalkan Jurnal', 'cmd_cancel_journal')]
+    ];
+
+    if (ctx.callbackQuery) {
+      await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: statusKeyboard } }).catch(() => ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: statusKeyboard } }));
+    } else {
+      await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: statusKeyboard } });
+    }
+  };
+
+  // Wizard Action: Skip Entry -> go to SL
   bot.action('js_skip_entry', async (ctx) => {
     if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
     const telegramId = ctx.from?.id?.toString();
@@ -1069,64 +1230,158 @@ export function initTelegramBot(db: any) {
     if (!session) return ctx.reply('Sesi jurnal telah berakhir. Ketik /jurnal.');
 
     session.entry = 0;
+    return promptSlStep(ctx, session);
+  });
+
+  // Wizard Action: Skip SL -> go to TP
+  bot.action('js_skip_sl', async (ctx) => {
+    if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
+    const telegramId = ctx.from?.id?.toString();
+    const session = journalSessions.get(telegramId);
+    if (!session) return ctx.reply('Sesi jurnal telah berakhir. Ketik /jurnal.');
+
+    session.sl = 0;
+    return promptTpStep(ctx, session);
+  });
+
+  // Wizard Action: Skip TP -> go to Open Time
+  bot.action('js_skip_tp', async (ctx) => {
+    if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
+    const telegramId = ctx.from?.id?.toString();
+    const session = journalSessions.get(telegramId);
+    if (!session) return ctx.reply('Sesi jurnal telah berakhir. Ketik /jurnal.');
+
+    session.tp = 0;
+    return promptOpenTimeStep(ctx, session);
+  });
+
+  // Wizard Action: Use Current Time for Open Time
+  bot.action('js_open_time_now', async (ctx) => {
+    if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
+    const telegramId = ctx.from?.id?.toString();
+    const session = journalSessions.get(telegramId);
+    if (!session) return ctx.reply('Sesi jurnal telah berakhir. Ketik /jurnal.');
+
+    const sess = getWibTimeAndSession();
+    session.trade_time = sess.timeStr;
+    session.session = sess.sessionName;
+    return promptOpenNotesStep(ctx, session);
+  });
+
+  // Wizard Action: Skip Open Notes -> go to Position Status
+  bot.action('js_skip_open_notes', async (ctx) => {
+    if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
+    const telegramId = ctx.from?.id?.toString();
+    const session = journalSessions.get(telegramId);
+    if (!session) return ctx.reply('Sesi jurnal telah berakhir. Ketik /jurnal.');
+
+    session.notes = 'Setup Pribadi XAUUSD';
+    return promptPositionStatusStep(ctx, session);
+  });
+
+  // Wizard Action: Selected [Masih Running]
+  bot.action('js_pos_running', async (ctx) => {
+    if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
+    const telegramId = ctx.from?.id?.toString();
+    const session = journalSessions.get(telegramId);
+    if (!session) return ctx.reply('Sesi jurnal telah berakhir. Ketik /jurnal.');
+
+    session.step = 'image_before_running';
+    session.timestamp = Date.now();
+
+    const msg = `📸 <b>CHART BEFORE - Analisis Sebelum Entry (Opsional)</b>\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `Kirim <b>Foto Screenshot</b> analisa entry langsung di chat\n` +
+                `<b>ATAU</b> tempelkan <b>Link TradingView</b> (cth: <code>https://www.tradingview.com/x/...</code>)\n\n` +
+                `<i>Atau klik tombol lewati untuk langsung mencatat posisi running:</i>`;
+
+    const imgKeyboard = [
+      [Markup.button.callback('⏩ Lewati Foto & Simpan Trade Running', 'js_save_running_now')],
+      [Markup.button.callback('❌ Batalkan Jurnal', 'cmd_cancel_journal')]
+    ];
+
+    if (ctx.callbackQuery) {
+      await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: imgKeyboard } }).catch(() => ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: imgKeyboard } }));
+    } else {
+      await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: imgKeyboard } });
+    }
+  });
+
+  // Wizard Action: Save Running Trade Now (from button)
+  bot.action('js_save_running_now', async (ctx) => {
+    if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
+    const telegramId = ctx.from?.id?.toString();
+    const session = journalSessions.get(telegramId);
+    if (!session) return ctx.reply('Sesi jurnal telah berakhir. Ketik /jurnal.');
+    await saveRunningTrade(ctx, telegramId, session);
+  });
+
+  // Wizard Action: Selected [Sudah Closed] -> ask for Result
+  bot.action('js_pos_closed', async (ctx) => {
+    if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
+    const telegramId = ctx.from?.id?.toString();
+    const session = journalSessions.get(telegramId);
+    if (!session) return ctx.reply('Sesi jurnal telah berakhir. Ketik /jurnal.');
+
     session.step = 'result';
     session.timestamp = Date.now();
 
-    const msg = `📝 <b>JURNAL TRADE XAUUSD (Langkah 4/7 - Status Hasil)</b>\n` +
+    const msg = `📝 <b>JURNAL TRADE XAUUSD (Status Hasil Selesai)</b>\n` +
                 `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
                 `📈 <b>XAUUSD</b> (${session.direction}) | Lot: <b>${session.lot}</b>\n\n` +
                 `Pilih status hasil dari trade ini:`;
 
     const resKeyboard = [
       [Markup.button.callback('🏆 WIN (Profit)', 'jr_WIN'), Markup.button.callback('❌ LOSS (Rugi)', 'jr_LOSS')],
-      [Markup.button.callback('⚖️ BE (Break Even)', 'jr_BE'), Markup.button.callback('⏳ Masih Berjalan (Running)', 'jr_PENDING')],
+      [Markup.button.callback('⚖️ BE (Break Even)', 'jr_BE')],
       [Markup.button.callback('❌ Batalkan', 'cmd_cancel_journal')]
     ];
 
     await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: resKeyboard } }).catch(() => ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: resKeyboard } }));
   });
 
-  // Wizard Action: Result status chosen
-  bot.action(/jr_(WIN|LOSS|BE|PENDING)/, async (ctx) => {
+  // Wizard Action: Result status chosen (for closed trade)
+  bot.action(/jr_(WIN|LOSS|BE)/, async (ctx) => {
     if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
     const res = ctx.match[1];
     const telegramId = ctx.from?.id?.toString();
     const session = journalSessions.get(telegramId);
     if (!session) return ctx.reply('Sesi jurnal telah berakhir. Ketik /jurnal.');
 
-    session.result = res === 'PENDING' ? 'Pending' : (res as any);
+    session.result = res as any;
     session.timestamp = Date.now();
 
-    if (res === 'BE' || res === 'PENDING') {
+    if (res === 'BE') {
       session.pnl = 0;
-      return promptTimeStep(ctx, session);
+      return promptCloseTimeStep(ctx, session);
     }
 
     session.step = 'pnl';
     const isWin = res === 'WIN';
-    const msg = `📝 <b>JURNAL TRADE XAUUSD (Langkah 5/7 - Realized P/L)</b>\n` +
+    const msg = `💵 <b>JURNAL TRADE XAUUSD (Realized P/L)</b>\n` +
                 `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
                 `Status: ${isWin ? '🏆 <b>WIN (Profit)</b>' : '❌ <b>LOSS (Rugi)</b>'}\n\n` +
-                `Ketik nominal Realized P/L dalam USD ($):\n` +
-                `• Contoh jika untung: <code>+125.50</code> atau <code>125</code>\n` +
+                `Ketik nominal Realized P/L dalam USD / USC di chat:\n` +
+                `• Contoh jika untung: <code>+125.50</code> atau <code>61.31</code>\n` +
                 `• Contoh jika rugi: <code>-45.00</code> atau <code>45</code>`;
 
     await ctx.editMessageText(msg, { parse_mode: 'HTML' }).catch(() => ctx.reply(msg, { parse_mode: 'HTML' }));
   });
 
-  // Step 6: Execution Time Step (WIB Time & Market Session)
-  const promptTimeStep = async (ctx: any, session: JournalSession) => {
-    session.step = 'time';
+  // Step for Closed Trade: Jam Tutup / Close Time Step (WIB)
+  const promptCloseTimeStep = async (ctx: any, session: JournalSession) => {
+    session.step = 'close_time';
     session.timestamp = Date.now();
 
     const nowWib = getWibTimeAndSession();
-    const msg = `⏰ <b>WAKTU / JAM EKSEKUSI TRADE (Langkah 6/9)</b>\n` +
+    const msg = `⏰ <b>JAM SELESAI / TUTUP TRADE (Close Time)</b>\n` +
                 `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
                 `🕒 Waktu saat ini: <b>${nowWib.timeStr} WIB</b> (${nowWib.sessionName})\n\n` +
-                `Pilih tombol di bawah untuk menggunakan jam sekarang, atau ketik jam manual di chat (format <i>HH:mm</i>, cth: <code>14:30</code>):`;
+                `Pilih tombol di bawah untuk menggunakan jam sekarang,\n` +
+                `atau ketik jam tutup manual di chat (format <i>HH:mm</i>, cth: <code>17:30</code>):`;
 
     const timeKeyboard = [
-      [Markup.button.callback(`⏰ Gunakan Jam Sekarang (${nowWib.timeStr} WIB)`, 'js_time_now')],
+      [Markup.button.callback(`⏰ Gunakan Jam Sekarang (${nowWib.timeStr} WIB)`, 'js_close_time_now')],
       [Markup.button.callback('❌ Batalkan Jurnal', 'cmd_cancel_journal')]
     ];
 
@@ -1137,28 +1392,60 @@ export function initTelegramBot(db: any) {
     }
   };
 
-  bot.action('js_time_now', async (ctx) => {
+  bot.action('js_close_time_now', async (ctx) => {
     if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
     const telegramId = ctx.from?.id?.toString();
     const session = journalSessions.get(telegramId);
     if (!session) return ctx.reply('Sesi jurnal telah berakhir. Ketik /jurnal.');
 
     const sess = getWibTimeAndSession();
-    session.trade_time = sess.timeStr;
-    session.session = sess.sessionName;
+    session.close_time = sess.timeStr;
+    return promptCloseNotesStep(ctx, session);
+  });
+
+  // Step for Closed Trade: Alasan Tutup / Evaluasi Step (Optional)
+  const promptCloseNotesStep = async (ctx: any, session: JournalSession) => {
+    session.step = 'close_notes';
+    session.timestamp = Date.now();
+
+    const msg = `📝 <b>ALASAN CLOSE / EVALUASI HASIL (Opsional)</b>\n` +
+                `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                `Ketik alasan penutupan trade ini di chat\n` +
+                `(cth: <i>Kena TP 1</i> atau <i>Manual cut karena news High Impact</i>):\n\n` +
+                `<i>Atau klik tombol lewati jika tidak ingin mengisi:</i>`;
+
+    const closeNotesKeyboard = [
+      [Markup.button.callback('⏩ Lewati Alasan Close', 'js_skip_close_notes')],
+      [Markup.button.callback('❌ Batalkan Jurnal', 'cmd_cancel_journal')]
+    ];
+
+    if (ctx.callbackQuery) {
+      await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: closeNotesKeyboard } }).catch(() => ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: closeNotesKeyboard } }));
+    } else {
+      await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: closeNotesKeyboard } });
+    }
+  };
+
+  bot.action('js_skip_close_notes', async (ctx) => {
+    if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
+    const telegramId = ctx.from?.id?.toString();
+    const session = journalSessions.get(telegramId);
+    if (!session) return ctx.reply('Sesi jurnal telah berakhir. Ketik /jurnal.');
+
+    session.close_notes = '';
     return promptBeforeImageStep(ctx, session);
   });
 
-  // Step 7: Chart Before Step (Photo Upload OR TradingView URL)
+  // Chart Before Step (Photo Upload OR TradingView URL)
   const promptBeforeImageStep = async (ctx: any, session: JournalSession) => {
     session.step = 'image_before';
     session.timestamp = Date.now();
 
-    const msg = `📸 <b>CHART BEFORE - Analisis Sebelum Entry (Langkah 7/9)</b>\n` +
+    const msg = `📸 <b>CHART BEFORE - Analisis Sebelum Entry (Opsional)</b>\n` +
                 `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
                 `Kirim <b>Foto Screenshot</b> analisa sebelum entry langsung di chat\n` +
                 `<b>ATAU</b> tempelkan <b>Link TradingView</b> (cth: <code>https://www.tradingview.com/x/...</code>)\n\n` +
-                `<i>Atau klik tombol lewati jika tidak ingin melampirkan chart before:</i>`;
+                `<i>Atau klik tombol lewati:</i>`;
 
     const imgKeyboard = [
       [Markup.button.callback('⏩ Lewati Foto Before', 'js_skip_before')],
@@ -1181,19 +1468,19 @@ export function initTelegramBot(db: any) {
     return promptAfterImageStep(ctx, session);
   });
 
-  // Step 8: Chart After Step (Photo Upload OR TradingView URL)
+  // Chart After Step (Photo Upload OR TradingView URL)
   const promptAfterImageStep = async (ctx: any, session: JournalSession) => {
     session.step = 'image_after';
     session.timestamp = Date.now();
 
-    const msg = `📸 <b>CHART AFTER - Hasil Sesudah Selesai (Langkah 8/9)</b>\n` +
+    const msg = `📸 <b>CHART AFTER - Hasil Sesudah Selesai (Opsional)</b>\n` +
                 `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
                 `Kirim <b>Foto Screenshot</b> hasil trade langsung di chat\n` +
                 `<b>ATAU</b> tempelkan <b>Link TradingView</b> (cth: <code>https://www.tradingview.com/x/...</code>)\n\n` +
-                `<i>Atau klik tombol lewati jika tidak ingin melampirkan chart after:</i>`;
+                `<i>Atau klik tombol lewati untuk langsung menyelesaikan & simpan:</i>`;
 
     const imgKeyboard = [
-      [Markup.button.callback('⏩ Lewati Foto After', 'js_skip_after')],
+      [Markup.button.callback('⏩ Lewati & Simpan Trade', 'js_save_trade')],
       [Markup.button.callback('❌ Batalkan Jurnal', 'cmd_cancel_journal')]
     ];
 
@@ -1210,31 +1497,8 @@ export function initTelegramBot(db: any) {
     const session = journalSessions.get(telegramId);
     if (!session) return ctx.reply('Sesi jurnal telah berakhir. Ketik /jurnal.');
     session.image_after = '';
-    return promptNotesStep(ctx, session);
+    return completeInteractiveJournal(ctx, telegramId, session);
   });
-
-  // Step 9: Trade Reason / Psychology Notes Step (Optional)
-  const promptNotesStep = async (ctx: any, session: JournalSession) => {
-    session.step = 'notes';
-    session.timestamp = Date.now();
-
-    const msg = `📝 <b>ALASAN / CATATAN TRADE (Langkah 9/9 - Opsional)</b>\n` +
-                `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                `Ketik alasan entry atau catatan psikologi trading Anda di chat\n` +
-                `(cth: <i>Reject SnR H4 + Konfirmasi Candle M15</i>).\n\n` +
-                `<i>Atau klik tombol di bawah untuk langsung menyelesaikan & menyimpan trade:</i>`;
-
-    const notesKeyboard = [
-      [Markup.button.callback('⏩ Selesai & Simpan Trade', 'js_save_trade')],
-      [Markup.button.callback('❌ Batalkan Jurnal', 'cmd_cancel_journal')]
-    ];
-
-    if (ctx.callbackQuery) {
-      await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: notesKeyboard } }).catch(() => ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: notesKeyboard } }));
-    } else {
-      await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: notesKeyboard } });
-    }
-  };
 
   bot.action('js_save_trade', async (ctx) => {
     if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
@@ -1256,6 +1520,87 @@ export function initTelegramBot(db: any) {
     }).catch(() => ctx.reply('Pencatatan jurnal dibatalkan.'));
   });
 
+  // Save running trade when user marks trade as [Masih Running]
+  const saveRunningTrade = async (ctx: any, telegramId: string, s: JournalSession) => {
+    try {
+      const user = await getActiveUser(telegramId, ctx.from?.username);
+      if (!user) return ctx.reply('❌ Akun tidak ditemukan.');
+
+      journalSessions.delete(telegramId);
+
+      const pair = 'XAUUSD';
+      const direction = s.direction || 'BUY';
+      const lot = s.lot || 0.01;
+      const entry = s.entry || 0;
+      const sl = s.sl || 0;
+      const tp = s.tp || 0;
+      const setup = 'Setup Pribadi';
+      const mode = user.current_mode || 'backtest';
+
+      const sess = getWibTimeAndSession(s.trade_time);
+      const finalBefore = s.image_before ? normalizeTradingViewUrl(s.image_before) : null;
+      const finalNotes = (s.notes && s.notes.trim()) ? s.notes.trim() : 'Posisi Running XAUUSD';
+
+      const insertRes = await db.execute({
+        sql: `INSERT INTO trades (
+          user_id, pair, direction, setup_name, entry_price, sl, tp,
+          account_balance, position_size, result, realized_pl, pips,
+          anxiety_level, notes, image, image_url, image_before, image_after, has_image, run_mode,
+          session, trade_time, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+        args: [
+          user.id, pair, direction, setup, entry, sl, tp,
+          0, lot, 'Pending', 0, 0,
+          2, finalNotes,
+          finalBefore || null,
+          finalBefore || null,
+          finalBefore,
+          null,
+          finalBefore ? 1 : 0,
+          mode,
+          sess.sessionName,
+          sess.timeStr
+        ]
+      });
+
+      const tradeId = Number(insertRes.lastInsertRowid);
+      const dirBadge = direction === 'BUY' ? '🟢 BUY' : '🔴 SELL';
+
+      const card =
+        `⏳ <b>POSISI TRADE RUNNING BERHASIL DICATAT!</b>\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `🆔 <b>Trade ID:</b> <code>#${tradeId}</code>\n` +
+        `👤 <b>Akun:</b> <code>${user.username}</code> (${mode})\n` +
+        `📈 <b>Pair:</b> <b>XAUUSD</b> (${dirBadge})\n` +
+        `📦 <b>Lot:</b> <b>${lot}</b>\n` +
+        (entry > 0 ? `🎯 <b>Entry Price:</b> <code>${entry}</code>\n` : `🎯 <b>Entry Price:</b> <i>Market Execution</i>\n`) +
+        (sl > 0 ? `🛑 <b>Stop Loss:</b> <code>${sl}</code>\n` : `🛑 <b>Stop Loss:</b> <i>Tanpa SL</i>\n`) +
+        (tp > 0 ? `🎯 <b>Take Profit:</b> <code>${tp}</code>\n` : `🎯 <b>Take Profit:</b> <i>Tanpa TP</i>\n`) +
+        `⏰ <b>Waktu Buka:</b> <b>${sess.timeStr} WIB</b> (${sess.sessionDisplay})\n` +
+        `📸 <b>Chart Before:</b> ${finalBefore ? '✅ Terlampir' : '—'}\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `💡 <b>PANDUAN PENUTUPAN SORE / MALAM:</b>\n` +
+        `Nanti saat posisi ini sudah selesai/ditutup (kena TP/SL atau manual close):\n` +
+        `👉 Cukup ketik: <code>/closed</code>\n` +
+        `Atau klik tombol <b>[⚡ Tutup Trade Ini]</b> di bawah!`;
+
+      const btns = [
+        [Markup.button.callback(`⚡ Tutup Trade Ini (#${tradeId})`, `cls_start_${tradeId}`)],
+        [Markup.button.callback('⏳ Lihat Semua Running', 'cmd_running'), Markup.button.callback('📱 Menu Utama', 'cmd_menu')]
+      ];
+
+      if (ctx.callbackQuery) {
+        await ctx.editMessageText(card, { parse_mode: 'HTML', reply_markup: { inline_keyboard: btns } })
+          .catch(() => ctx.reply(card, { parse_mode: 'HTML', reply_markup: { inline_keyboard: btns } }));
+      } else {
+        await ctx.reply(card, { parse_mode: 'HTML', reply_markup: { inline_keyboard: btns } });
+      }
+    } catch (e) {
+      console.error('saveRunningTrade error:', e);
+      await ctx.reply('❌ Terjadi kesalahan saat menyimpan trade running.');
+    }
+  };
+
   // Complete and save interactive trade
   const completeInteractiveJournal = async (ctx: any, telegramId: string, s: JournalSession) => {
     try {
@@ -1275,20 +1620,26 @@ export function initTelegramBot(db: any) {
       const setup = 'Setup Pribadi';
       const mode = user.current_mode || 'backtest';
       const isWin = result.toUpperCase() === 'WIN';
-      const pips = calculatePips(pair, entry, tp, pnl, lot, isWin, user?.currency === 'NANO');
+      const isNano = user?.currency === 'NANO';
+      const pips = calculatePips(pair, entry, tp, pnl, lot, isWin, isNano);
 
-      const sess = getWibTimeAndSession(s.trade_time);
+      const openSess = getWibTimeAndSession(s.trade_time);
+      const closeSess = getWibTimeAndSession(s.close_time || openSess.timeStr);
       const finalBefore = s.image_before ? normalizeTradingViewUrl(s.image_before) : null;
       const finalAfter = s.image_after ? normalizeTradingViewUrl(s.image_after) : null;
-      const finalNotes = (s.notes && s.notes.trim()) ? s.notes.trim() : 'Setup Pribadi XAUUSD';
+
+      let finalNotes = (s.notes && s.notes.trim()) ? s.notes.trim() : 'Setup Pribadi XAUUSD';
+      if (s.close_notes && s.close_notes.trim()) {
+        finalNotes = `${finalNotes} | Close: ${s.close_notes.trim()}`;
+      }
 
       const insertRes = await db.execute({
         sql: `INSERT INTO trades (
           user_id, pair, direction, setup_name, entry_price, sl, tp,
           account_balance, position_size, result, realized_pl, pips,
           anxiety_level, notes, image, image_url, image_before, image_after, has_image, run_mode,
-          session, trade_time, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+          session, trade_time, close_time, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
         args: [
           user.id, pair, direction, setup, entry, sl, tp,
           0, lot, result, pnl, pips,
@@ -1299,14 +1650,17 @@ export function initTelegramBot(db: any) {
           finalAfter,
           (finalBefore || finalAfter) ? 1 : 0,
           mode,
-          sess.sessionName,
-          sess.timeStr
+          openSess.sessionName,
+          openSess.timeStr,
+          closeSess.timeStr
         ]
       });
 
       const tradeId = insertRes.lastInsertRowid;
       const equityData = await getUserEquityData(user.id, user);
 
+      const isCent = user?.currency === 'USC' || isNano;
+      const sym = isCent ? '¢' : (user?.currency === 'IDR' ? 'Rp ' : '$');
       const signPL = pnl >= 0 ? '+' : '';
       const signPips = pips >= 0 ? '+' : '';
 
@@ -1316,18 +1670,19 @@ export function initTelegramBot(db: any) {
                    `👤 <b>Akun:</b> <code>${user.username}</code> (${mode})\n` +
                    `📈 <b>Pair:</b> <b>XAUUSD</b> (${direction === 'BUY' ? '🟢 BUY' : '🔴 SELL'})\n` +
                    `📦 <b>Lot Size:</b> <b>${lot}</b>\n` +
-                   `🎯 <b>Setup:</b> Setup Pribadi\n` +
-                   (entry > 0 ? `🎯 <b>Entry:</b> ${entry}\n` : '') +
-                   (sl > 0 ? `🛑 <b>SL:</b> ${sl} | 🎯 <b>TP:</b> ${tp}\n` : '') +
-                   `🕒 <b>Waktu:</b> <b>${sess.timeStr} WIB</b> (${sess.sessionDisplay})\n` +
+                   (entry > 0 ? `🎯 <b>Entry:</b> <code>${entry}</code>\n` : '') +
+                   (sl > 0 ? `🛑 <b>SL:</b> <code>${sl}</code> | 🎯 <b>TP:</b> <code>${tp}</code>\n` : '') +
+                   `⏰ <b>Jam Buka:</b> <b>${openSess.timeStr} WIB</b> (${openSess.sessionDisplay})\n` +
+                   `⏰ <b>Jam Tutup:</b> <b>${closeSess.timeStr} WIB</b>\n` +
                    `🏆 <b>Status:</b> <b>${result}</b>\n` +
-                   `💵 <b>Realized P/L:</b> <b>${signPL}$${pnl.toFixed(2)}</b>\n` +
+                   `💵 <b>Realized P/L:</b> <b>${signPL}${sym}${pnl.toFixed(2)}</b>\n` +
                    `📏 <b>Pips:</b> <b>${signPips}${pips} Pips</b>\n` +
+                   (s.notes ? `📝 <b>Alasan Entry:</b> <i>${escapeHtml(s.notes)}</i>\n` : '') +
+                   (s.close_notes ? `📝 <b>Alasan Close:</b> <i>${escapeHtml(s.close_notes)}</i>\n` : '') +
                    `📸 <b>Chart Before:</b> ${finalBefore ? '✅ Terlampir' : '—'}\n` +
                    `📸 <b>Chart After:</b> ${finalAfter ? '✅ Terlampir' : '—'}\n` +
-                   `📝 <b>Alasan:</b> ${escapeHtml(finalNotes)}\n` +
                    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                   `⚡ <b>Equity Terkini:</b> <b>$${equityData.currentEquity.toFixed(2)}</b>\n` +
+                   `⚡ <b>Equity Terkini:</b> <b>${sym}${equityData.currentEquity.toFixed(2)}</b>\n` +
                    `🌐 <b>Web:</b> <a href="https://jalu-trading-jurnal.vercel.app/">jalu-trading-jurnal.vercel.app</a>\n` +
                    `<i>Data tersinkronisasi otomatis ke Dashboard Web! ✨</i>`;
 
@@ -1827,18 +2182,23 @@ export function initTelegramBot(db: any) {
 
       const buttons: any[] = [];
       openTrades.forEach((t) => {
-        msg += `• <b>#${t.id} ${t.pair}</b> (${t.direction}) | Lot: ${t.position_size || 0.01}\n` +
-               `  Entry: ${t.entry_price || '-'} | SL: ${t.sl || '-'} | TP: ${t.tp || '-'}\n` +
+        const dirBadge = t.direction === 'BUY' ? '🟢 BUY' : '🔴 SELL';
+        msg += `• <b>#${t.id} ${t.pair}</b> (${dirBadge}) | Lot: <b>${t.position_size || 0.01}</b>\n` +
+               `  Entry: <code>${t.entry_price || '-'}</code> | SL: <code>${t.sl || '-'}</code> | TP: <code>${t.tp || '-'}</code>\n` +
                `  Setup: <i>${t.setup_name || '-'}</i>\n\n`;
 
         buttons.push([
-          Markup.button.callback(`✅ Tutup #${t.id} WIN`, `close_trade_${t.id}_WIN`),
-          Markup.button.callback(`❌ Tutup #${t.id} LOSS`, `close_trade_${t.id}_LOSS`)
+          Markup.button.callback(`⚡ Tutup #${t.id} (${t.direction})`, `cls_start_${t.id}`),
+          Markup.button.callback(`🏆 WIN`, `close_trade_${t.id}_WIN`),
+          Markup.button.callback(`❌ LOSS`, `close_trade_${t.id}_LOSS`)
         ]);
       });
 
-      msg += `💡 <i>Klik tombol di atas atau ketik:</i>\n` +
-             `<code>/close [id] [win/loss] [p/l]</code> (Contoh: <code>/close ${openTrades[0].id} win 120</code>)`;
+      msg += `💡 <i>Tutup posisi dengan perintah:</i>\n` +
+             `• <code>/closed</code> (Wizard interaktif step-by-step 1/1)\n` +
+             `• <code>/closed +120</code> (Langsung tutup WIN +$120)\n` +
+             `• <code>/closed -45</code> (Langsung tutup LOSS -$45)\n` +
+             `• Atau klik tombol <b>[⚡ Tutup]</b> di atas.`;
 
       buttons.push([{ text: '🔙 Menu Utama', callback_data: 'cmd_menu' }]);
 
@@ -1854,79 +2214,476 @@ export function initTelegramBot(db: any) {
   };
   bot.command(['running', 'pending', 'open'], handleRunningTrades);
 
-  // Action callback: close trade with prompt
-  bot.action(/close_trade_(\d+)_(WIN|LOSS)/, async (ctx) => {
-    const tradeId = parseInt(ctx.match[1], 10);
-    const result = ctx.match[2];
+  // START CLOSE WIZARD FOR A SPECIFIC TRADE
+  const startCloseWizardForTrade = async (ctx: any, user: any, trade: any) => {
     const telegramId = ctx.from?.id?.toString();
-    const user = await getActiveUser(telegramId, ctx.from?.username);
-    if (!user) return ctx.reply('❌ Akun belum terhubung.');
+    if (!telegramId) return;
 
-    const promptText = `Ketik nominal P/L penutupan untuk trade <b>#${tradeId}</b> (${result}):\n` +
-                       `Ketik perintah: <code>/close ${tradeId} ${result.toLowerCase()} [nominal_dollar]</code>\n` +
-                       `Contoh: <code>/close ${tradeId} ${result.toLowerCase()} ${result === 'WIN' ? '150' : '-50'}</code>`;
+    closeSessions.set(telegramId, {
+      step: 'result',
+      tradeId: Number(trade.id),
+      pair: trade.pair || 'XAUUSD',
+      direction: trade.direction || 'BUY',
+      lot: trade.position_size || 0.01,
+      entry: trade.entry_price || 0,
+      sl: trade.sl || 0,
+      tp: trade.tp || 0,
+      open_time: trade.trade_time || '',
+      notes: trade.notes || '',
+      timestamp: Date.now()
+    });
 
-    await ctx.reply(promptText, { parse_mode: 'HTML' });
-  });
+    const dirBadge = trade.direction === 'BUY' ? '🟢 BUY' : '🔴 SELL';
+    const msg =
+      `⚡ <b>TUTUP TRADE RUNNING (Langkah 1/5 - Status Hasil)</b>\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `🆔 <b>Trade ID:</b> <code>#${trade.id}</code>\n` +
+      `📈 <b>${trade.pair || 'XAUUSD'}</b> (${dirBadge}) | Lot: <b>${trade.position_size || 0.01}</b>\n` +
+      `🎯 Entry: <code>${trade.entry_price || '-'}</code> | 🛑 SL: <code>${trade.sl || '-'}</code> | 🎯 TP: <code>${trade.tp || '-'}</code>\n` +
+      `⏰ Jam Buka: <b>${trade.trade_time || 'Pagi'} WIB</b>\n\n` +
+      `Bagaimana hasil akhir trade ini saat ditutup?`;
 
-  // Command: /close [id] [win/loss] [pnl]
-  bot.command('close', async (ctx) => {
+    const btns = [
+      [Markup.button.callback('🏆 WIN (Profit)', 'cls_res_WIN'), Markup.button.callback('❌ LOSS (Rugi)', 'cls_res_LOSS')],
+      [Markup.button.callback('⚖️ BE (Break Even)', 'cls_res_BE')],
+      [Markup.button.callback('❌ Batalkan', 'cls_cancel')]
+    ];
+
+    if (ctx.callbackQuery) {
+      await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: btns } })
+        .catch(() => ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: btns } }));
+    } else {
+      await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: btns } });
+    }
+  };
+
+  // STEP 3: PROMPT CLOSE TIME FOR /closed
+  const promptCloseTimeForClose = async (ctx: any, cs: CloseSession) => {
+    cs.step = 'close_time';
+    cs.timestamp = Date.now();
+
+    const nowWib = getWibTimeAndSession();
+    const sign = (cs.pnl || 0) >= 0 ? '+' : '';
+    const resLabel = cs.result === 'WIN' ? '🏆 WIN' : cs.result === 'LOSS' ? '❌ LOSS' : '⚖️ BE';
+
+    const msg =
+      `⏰ <b>JAM TUTUP / CLOSE TRADE (Langkah 3/5)</b>\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `🆔 <b>Trade ID:</b> <code>#${cs.tradeId}</code> (${cs.pair} ${cs.direction})\n` +
+      `Hasil: <b>${resLabel}</b> | P/L: <b>${sign}$${(cs.pnl || 0).toFixed(2)}</b>\n` +
+      `🕒 Waktu saat ini: <b>${nowWib.timeStr} WIB</b> (${nowWib.sessionName})\n\n` +
+      `Pilih tombol di bawah untuk menggunakan jam sekarang,\n` +
+      `atau ketik jam tutup manual di chat (format <i>HH:mm</i>, cth: <code>17:30</code>):`;
+
+    const btns = [
+      [Markup.button.callback(`⏰ Gunakan Jam Sekarang (${nowWib.timeStr} WIB)`, 'cls_close_time_now')],
+      [Markup.button.callback('❌ Batalkan', 'cls_cancel')]
+    ];
+
+    if (ctx.callbackQuery) {
+      await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: btns } })
+        .catch(() => ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: btns } }));
+    } else {
+      await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: btns } });
+    }
+  };
+
+  // STEP 4: PROMPT CLOSE REASON / EVALUATION FOR /closed
+  const promptCloseNotesForClose = async (ctx: any, cs: CloseSession) => {
+    cs.step = 'close_notes';
+    cs.timestamp = Date.now();
+
+    const msg =
+      `📝 <b>ALASAN CLOSE / EVALUASI (Langkah 4/5 - Opsional)</b>\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `🆔 <b>Trade ID:</b> <code>#${cs.tradeId}</code> | Jam Tutup: <b>${cs.close_time || 'Sekarang'} WIB</b>\n\n` +
+      `Ketik <b>alasan penutupan</b> atau evaluasi trading di chat\n` +
+      `(cth: <i>Kena TP target 1</i>, <i>Trailing stop hit</i>, atau <i>Manual cut sebelum news</i>):\n\n` +
+      `<i>Atau klik tombol lewati jika tidak ingin mengisi alasan:</i>`;
+
+    const btns = [
+      [Markup.button.callback('⏩ Lewati Alasan Close', 'cls_skip_close_notes')],
+      [Markup.button.callback('❌ Batalkan', 'cls_cancel')]
+    ];
+
+    if (ctx.callbackQuery) {
+      await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: btns } })
+        .catch(() => ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: btns } }));
+    } else {
+      await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: btns } });
+    }
+  };
+
+  // STEP 5: PROMPT CLOSE AFTER IMAGE (OPTIONAL SCREENSHOT / TRADINGVIEW LINK)
+  const promptCloseAfterImage = async (ctx: any, cs: CloseSession) => {
+    cs.step = 'image_after';
+    cs.timestamp = Date.now();
+
+    const sign = (cs.pnl || 0) >= 0 ? '+' : '';
+    const resLabel = cs.result === 'WIN' ? '🏆 WIN' : cs.result === 'LOSS' ? '❌ LOSS' : '⚖️ BE';
+
+    const msg =
+      `📸 <b>TUTUP TRADE #${cs.tradeId} (Langkah 5/5 - Chart After / Bukti)</b>\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `Hasil: <b>${resLabel}</b> | P/L: <b>${sign}$${(cs.pnl || 0).toFixed(2)}</b>\n` +
+      `⏰ Jam Tutup: <b>${cs.close_time || 'Sekarang'} WIB</b>\n\n` +
+      `Kirim <b>Foto Screenshot</b> hasil penutupan trade langsung di chat\n` +
+      `<b>ATAU</b> tempelkan <b>Link TradingView</b> (cth: <code>https://www.tradingview.com/x/...</code>)\n\n` +
+      `<i>Atau klik tombol di bawah untuk langsung menyelesaikan & menyimpan ke jurnal:</i>`;
+
+    const btns = [
+      [Markup.button.callback('⏩ Lewati & Selesai Simpan', 'cls_skip_after')],
+      [Markup.button.callback('❌ Batalkan', 'cls_cancel')]
+    ];
+
+    if (ctx.callbackQuery) {
+      await ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: btns } })
+        .catch(() => ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: btns } }));
+    } else {
+      await ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: btns } });
+    }
+  };
+
+  // EXECUTE TRADE CLOSE IN DATABASE AND RETURN RICH SUMMARY
+  const executeTradeClose = async (
+    ctx: any,
+    user: any,
+    trade: any,
+    result: 'WIN' | 'LOSS' | 'BE',
+    pnl: number,
+    imageAfter?: string | null,
+    closeNotes?: string | null,
+    closeTime?: string | null
+  ) => {
     try {
-      const parts = ctx.message.text.trim().split(/\s+/);
-      if (parts.length < 4) {
-        return ctx.reply(
-          `❌ <b>Format Salah</b>\n` +
-          `Gunakan: <code>/close [id] [win/loss/be] [pnl]</code>\n` +
-          `Contoh untung: <code>/close 15 win 125.50</code>\n` +
-          `Contoh rugi: <code>/close 15 loss -40</code>`,
-          { parse_mode: 'HTML' }
-        );
+      const telegramId = ctx.from?.id?.toString();
+      if (telegramId) closeSessions.delete(telegramId);
+
+      const isNano = user.currency === 'NANO';
+      const isWin = result === 'WIN';
+      const pips = calculatePips(trade.pair || 'XAUUSD', trade.entry_price || 0, trade.tp || 0, pnl, trade.position_size || 0.01, isWin, isNano);
+      
+      const finalAfter = imageAfter ? normalizeTradingViewUrl(imageAfter) : null;
+      const finalCloseTime = closeTime || getWibTimeAndSession().timeStr;
+
+      const existingNotes = (trade.notes || '').trim();
+      let appendedNotes = existingNotes;
+      if (closeNotes && closeNotes.trim()) {
+        appendedNotes = existingNotes ? `${existingNotes} | Close: ${closeNotes.trim()}` : `Close: ${closeNotes.trim()}`;
       }
 
-      const tradeId = parseInt(parts[1], 10);
-      const resStatus = parts[2].toUpperCase();
-      let pnl = parseFloat(parts[3]) || 0;
-      if (resStatus === 'LOSS' && pnl > 0) pnl = -pnl;
+      await db.execute({
+        sql: `UPDATE trades SET 
+          result = ?,
+          realized_pl = ?,
+          pips = ?,
+          close_time = ?,
+          image_after = COALESCE(?, image_after),
+          image_url = COALESCE(?, image_after, image_url, image),
+          image = COALESCE(?, image, image_url),
+          has_image = CASE WHEN (? IS NOT NULL OR image IS NOT NULL OR image_before IS NOT NULL) THEN 1 ELSE 0 END,
+          notes = ?
+        WHERE id = ? AND user_id = ?`,
+        args: [result, pnl, pips, finalCloseTime, finalAfter, finalAfter, finalAfter, finalAfter, appendedNotes, trade.id, user.id]
+      });
 
+      const s = await getUserEquityData(user.id, user);
+      const isCent = user.currency === 'USC' || isNano;
+      const sym = isCent ? '¢' : (user.currency === 'IDR' ? 'Rp ' : '$');
+      const targetGoal = user.target_balance ? Number(user.target_balance) : (s.initialBal > 0 ? Math.round(s.initialBal * 1.2) : 10800);
+      const goalPct = targetGoal > 0 ? Math.min(100, Math.max(0, (s.currentEquity / targetGoal) * 100)) : 0;
+      const pBar = renderProgressBar(goalPct, 10);
+      const signPL = pnl >= 0 ? '+' : '';
+      const signPips = pips >= 0 ? '+' : '';
+      const dirBadge = trade.direction === 'BUY' ? '🟢 BUY' : '🔴 SELL';
+
+      const entryReason = existingNotes.replace(/\s*\|\s*Close:.*$/i, '').trim();
+      const cleanCloseReason = closeNotes?.trim() || '';
+
+      const card =
+        `🏁 <b>[TRADE #${trade.id} RESMI DITUTUP & TERSIMPAN]</b>\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `👤 <b>Akun:</b> <code>${user.username}</code> (${user.current_mode || 'backtest'})\n` +
+        `📈 <b>Pair:</b> <b>${trade.pair || 'XAUUSD'}</b> (${dirBadge})\n` +
+        `📦 <b>Lot Size:</b> <b>${trade.position_size || 0.01}</b>\n` +
+        (trade.entry_price > 0 ? `🎯 <b>Entry:</b> <code>${trade.entry_price}</code>\n` : '') +
+        (trade.sl > 0 ? `🛑 <b>SL:</b> <code>${trade.sl}</code> | ` : '') +
+        (trade.tp > 0 ? `🎯 <b>TP:</b> <code>${trade.tp}</code>\n` : (trade.sl > 0 ? '\n' : '')) +
+        `⏰ <b>Jam Buka:</b> <b>${trade.trade_time || '09:00'} WIB</b>\n` +
+        `⏰ <b>Jam Tutup:</b> <b>${finalCloseTime} WIB</b>\n` +
+        `🏆 <b>Status Akhir:</b> <b>${result === 'WIN' ? '🏆 WIN (Profit)' : result === 'LOSS' ? '❌ LOSS (Rugi)' : '⚖️ BE (Break Even)'}</b>\n` +
+        `💵 <b>Realized P/L:</b> <b>${signPL}${sym}${pnl.toFixed(2)}</b>\n` +
+        `📏 <b>Pips:</b> <b>${signPips}${pips} Pips</b>\n` +
+        (entryReason ? `📝 <b>Alasan Entry:</b> <i>${escapeHtml(entryReason)}</i>\n` : '') +
+        (cleanCloseReason ? `📝 <b>Alasan Close:</b> <i>${escapeHtml(cleanCloseReason)}</i>\n` : '') +
+        (trade.image_before ? `📸 <b>Chart Before:</b> ✅ Terlampir\n` : '') +
+        (finalAfter ? `📸 <b>Chart After:</b> ✅ Terlampir\n` : '') +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `⚡ <b>Equity Terkini:</b> <b>${sym}${s.currentEquity.toLocaleString('en-US', { minimumFractionDigits: 2 })}</b>\n` +
+        `🎯 <b>Progress to Goal:</b> <b>${pBar} ${goalPct.toFixed(1)}%</b>\n` +
+        `🌐 <i>Data tersinkronisasi otomatis ke Dashboard Web! ✨</i>`;
+
+      const btns = [
+        [Markup.button.url('🌐 Buka di Web Dashboard', 'https://jalu-trading-jurnal.vercel.app/')],
+        [Markup.button.callback('📊 Cek Hari Ini (/today)', 'cmd_today'), Markup.button.callback('💰 Cek Saldo', 'cmd_saldo')],
+        [Markup.button.callback('📝 Jurnal Trade Baru', 'cmd_start_journal'), Markup.button.callback('📱 Menu Utama', 'cmd_menu')]
+      ];
+
+      if (ctx.callbackQuery) {
+        await ctx.editMessageText(card, { parse_mode: 'HTML', reply_markup: { inline_keyboard: btns } })
+          .catch(() => ctx.reply(card, { parse_mode: 'HTML', reply_markup: { inline_keyboard: btns } }));
+      } else {
+        await ctx.reply(card, { parse_mode: 'HTML', reply_markup: { inline_keyboard: btns } });
+      }
+    } catch (e) {
+      console.error('executeTradeClose error:', e);
+      await ctx.reply('❌ Gagal menutup trade.');
+    }
+  };
+
+  // COMMAND /closed /close: WIZARD + SHORTHAND HANDLER
+  const handleClosedCommand = async (ctx: any) => {
+    try {
       const telegramId = ctx.from?.id?.toString();
       const user = await getActiveUser(telegramId, ctx.from?.username);
       if (!user) return sendUnlinkedPrompt(ctx);
 
-      const tradeRes = await db.execute({
-        sql: "SELECT * FROM trades WHERE id = ? AND user_id = ?",
-        args: [tradeId, user.id]
+      const rawText = (ctx.message?.text || '').trim();
+      const parts = rawText.split(/\s+/).slice(1); // tokens after command
+      
+      const openRes = await db.execute({
+        sql: "SELECT * FROM trades WHERE user_id = ? AND result = 'Pending' ORDER BY id DESC",
+        args: [user.id]
       });
+      const openTrades = openRes.rows as any[];
 
-      if (tradeRes.rows.length === 0) {
-        return ctx.reply(`❌ Trade #${tradeId} tidak ditemukan.`);
+      if (openTrades.length === 0) {
+        const msg =
+          `⏳ <b>TIDAK ADA TRADE RUNNING</b>\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `Saat ini tidak ada posisi terbuka yang sedang berjalan di akun Anda.\n\n` +
+          `Untuk mencatat posisi running di pagi hari:\n` +
+          `• Ketik <code>/jurnal</code> lalu pilih <b>[⏳ Masih Running]</b>\n` +
+          `• Atau <code>/quick XAUUSD BUY 0.10 2650 RUNNING</code>`;
+        
+        const noBtns = [
+          [Markup.button.callback('📝 Jurnal Baru Sekarang', 'cmd_start_journal')],
+          [Markup.button.callback('📱 Menu Utama', 'cmd_menu')]
+        ];
+
+        if (ctx.callbackQuery) {
+          return ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: noBtns } })
+            .catch(() => ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: noBtns } }));
+        }
+        return ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: noBtns } });
       }
 
-      const trade = tradeRes.rows[0] as any;
-      const isWin = resStatus === 'WIN';
-      const pips = calculatePips(trade.pair, trade.entry_price || 0, trade.tp || 0, pnl, trade.position_size || 0.01, isWin, user?.currency === 'NANO');
+      // Check for shorthand parameters (e.g. /closed +120, /closed -45, /closed 15 win 120)
+      if (parts.length > 0) {
+        let targetTrade: any = null;
+        let argOffset = 0;
+        const maybeId = parseInt(parts[0], 10);
+        if (!isNaN(maybeId) && maybeId > 0 && parts.length > 1) {
+          targetTrade = openTrades.find(t => t.id === maybeId);
+          if (targetTrade) {
+            argOffset = 1;
+          }
+        }
+        
+        if (!targetTrade) {
+          targetTrade = openTrades[0];
+        }
 
-      await db.execute({
-        sql: "UPDATE trades SET result = ?, realized_pl = ?, pips = ? WHERE id = ?",
-        args: [resStatus, pnl, pips, tradeId]
-      });
+        const remainingTokens = parts.slice(argOffset);
+        let pnlVal: number | null = null;
+        let resultVal: 'WIN' | 'LOSS' | 'BE' | null = null;
 
-      const s = await getUserEquityData(user.id, user);
+        for (const tok of remainingTokens) {
+          const u = tok.toUpperCase();
+          if (u === 'WIN' || u === 'PROFIT') resultVal = 'WIN';
+          else if (u === 'LOSS' || u === 'RUGI') resultVal = 'LOSS';
+          else if (u === 'BE' || u === 'BREAKEVEN') resultVal = 'BE';
+          else {
+            const num = parseFloat(tok.replace('$', '').replace('+', ''));
+            if (!isNaN(num)) {
+              pnlVal = num;
+              if (tok.startsWith('-')) resultVal = 'LOSS';
+              else if (tok.startsWith('+')) resultVal = 'WIN';
+            }
+          }
+        }
 
-      const sign = pnl >= 0 ? '+' : '';
-      const msg = `✅ <b>[TRADE #${tradeId} DITUTUP]</b>\n` +
-                  `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                  `📈 Pair: <b>${trade.pair}</b> (${trade.direction})\n` +
-                  `🏆 Status: <b>${resStatus}</b>\n` +
-                  `💵 Realized P/L: <b>${sign}$${pnl.toFixed(2)}</b>\n` +
-                  `📏 Pips: <b>${pips} Pips</b>\n` +
-                  `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
-                  `⚡ Equity Terkini: <b>$${s.currentEquity.toFixed(2)}</b>`;
+        if (pnlVal !== null) {
+          if (!resultVal) {
+            resultVal = pnlVal > 0 ? 'WIN' : (pnlVal < 0 ? 'LOSS' : 'BE');
+          }
+          if (resultVal === 'LOSS' && pnlVal > 0) pnlVal = -pnlVal;
+          if (resultVal === 'WIN' && pnlVal < 0) pnlVal = Math.abs(pnlVal);
+          if (resultVal === 'BE') pnlVal = 0;
 
-      await ctx.reply(msg, { parse_mode: 'HTML' });
+          return await executeTradeClose(ctx, user, targetTrade, resultVal, pnlVal);
+        }
+      }
+
+      // Interactive 1/1 step-by-step closing wizard
+      if (openTrades.length === 1) {
+        return startCloseWizardForTrade(ctx, user, openTrades[0]);
+      } else {
+        let msg =
+          `⚡ <b>PILIH TRADE RUNNING UNTUK DITUTUP</b>\n` +
+          `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+          `Ditemukan <b>${openTrades.length} posisi berjalan</b>. Klik tombol trade yang ingin Anda tutup:\n\n`;
+
+        const btns: any[] = [];
+        openTrades.forEach((t) => {
+          const dirBadge = t.direction === 'BUY' ? '🟢 BUY' : '🔴 SELL';
+          msg += `• <b>#${t.id} ${t.pair}</b> (${dirBadge}) | Lot: <b>${t.position_size || 0.01}</b>\n` +
+                 `  Entry: <code>${t.entry_price || '-'}</code> | SL: <code>${t.sl || '-'}</code> | TP: <code>${t.tp || '-'}</code>\n\n`;
+
+          btns.push([
+            Markup.button.callback(`⚡ Tutup #${t.id} ${t.pair} (${t.direction})`, `cls_start_${t.id}`)
+          ]);
+        });
+
+        btns.push([Markup.button.callback('❌ Batalkan', 'cls_cancel')]);
+
+        if (ctx.callbackQuery) {
+          return ctx.editMessageText(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: btns } })
+            .catch(() => ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: btns } }));
+        }
+        return ctx.reply(msg, { parse_mode: 'HTML', reply_markup: { inline_keyboard: btns } });
+      }
     } catch (e) {
-      console.error(e);
-      await ctx.reply('❌ Gagal menutup trade.');
+      console.error('handleClosedCommand error:', e);
+      await ctx.reply('❌ Terjadi kesalahan saat memproses penutupan trade.');
     }
+  };
+
+  bot.command(['closed', 'close', 'tutup', 'selesai'], handleClosedCommand);
+  bot.action('cmd_closed', handleClosedCommand);
+
+  // Close wizard actions
+  bot.action(/^cls_start_(\d+)$/, async (ctx: any) => {
+    if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
+    const tradeId = parseInt(ctx.match[1], 10);
+    const telegramId = ctx.from?.id?.toString();
+    const user = await getActiveUser(telegramId, ctx.from?.username);
+    if (!user) return ctx.reply('❌ Akun tidak ditemukan.');
+    
+    const tradeRes = await db.execute({
+      sql: "SELECT * FROM trades WHERE id = ? AND user_id = ?",
+      args: [tradeId, user.id]
+    });
+    if (tradeRes.rows.length === 0) return ctx.reply(`❌ Trade #${tradeId} tidak ditemukan.`);
+    await startCloseWizardForTrade(ctx, user, tradeRes.rows[0]);
+  });
+
+  bot.action(/cls_res_(WIN|LOSS|BE)/, async (ctx: any) => {
+    if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
+    const res = ctx.match[1] as 'WIN' | 'LOSS' | 'BE';
+    const telegramId = ctx.from?.id?.toString();
+    const cs = closeSessions.get(telegramId);
+    if (!cs) return ctx.reply('Sesi penutupan telah berakhir. Ketik /closed untuk mulai lagi.');
+
+    cs.result = res;
+    cs.timestamp = Date.now();
+
+    if (res === 'BE') {
+      cs.pnl = 0;
+      return promptCloseTimeForClose(ctx, cs);
+    }
+
+    cs.step = 'pnl';
+    const isWin = res === 'WIN';
+    const msg =
+      `💵 <b>TUTUP TRADE #${cs.tradeId} (Langkah 2/5 - Realized P/L)</b>\n` +
+      `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+      `Hasil: ${isWin ? '🏆 <b>WIN (Profit)</b>' : '❌ <b>LOSS (Rugi)</b>'}\n\n` +
+      `Ketik nominal profit/rugi dalam USD / USC di chat:\n` +
+      `• Contoh untung: <code>+125.50</code> atau <code>61.31</code>\n` +
+      `• Contoh rugi: <code>-45.00</code> atau <code>45</code>`;
+
+    await ctx.editMessageText(msg, { parse_mode: 'HTML' }).catch(() => ctx.reply(msg, { parse_mode: 'HTML' }));
+  });
+
+  bot.action('cls_close_time_now', async (ctx: any) => {
+    if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
+    const telegramId = ctx.from?.id?.toString();
+    const cs = closeSessions.get(telegramId);
+    if (!cs) return ctx.reply('Sesi penutupan telah berakhir. Ketik /closed untuk mulai lagi.');
+
+    const nowWib = getWibTimeAndSession();
+    cs.close_time = nowWib.timeStr;
+    return promptCloseNotesForClose(ctx, cs);
+  });
+
+  bot.action('cls_skip_close_notes', async (ctx: any) => {
+    if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
+    const telegramId = ctx.from?.id?.toString();
+    const cs = closeSessions.get(telegramId);
+    if (!cs) return ctx.reply('Sesi penutupan telah berakhir. Ketik /closed untuk mulai lagi.');
+
+    cs.close_notes = '';
+    return promptCloseAfterImage(ctx, cs);
+  });
+
+  bot.action('cls_skip_after', async (ctx: any) => {
+    if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
+    const telegramId = ctx.from?.id?.toString();
+    const cs = closeSessions.get(telegramId);
+    if (!cs) return ctx.reply('Sesi penutupan telah berakhir. Ketik /closed untuk mulai lagi.');
+    const user = await getActiveUser(telegramId, ctx.from?.username);
+    const tradeRes = await db.execute({ sql: "SELECT * FROM trades WHERE id = ?", args: [cs.tradeId] });
+    return executeTradeClose(ctx, user, tradeRes.rows[0] || cs, cs.result || 'WIN', cs.pnl || 0, null, cs.close_notes, cs.close_time);
+  });
+
+  bot.action('cls_cancel', async (ctx: any) => {
+    if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
+    const telegramId = ctx.from?.id?.toString();
+    if (telegramId) closeSessions.delete(telegramId);
+    await ctx.editMessageText('❌ Penutupan trade dibatalkan.', {
+      reply_markup: {
+        inline_keyboard: [[{ text: '📱 Buka Menu', callback_data: 'cmd_menu' }]]
+      }
+    }).catch(() => ctx.reply('Penutupan trade dibatalkan.'));
+  });
+
+  // Action callback: quick close from /running buttons
+  bot.action(/close_trade_(\d+)_(WIN|LOSS)/, async (ctx: any) => {
+    if (ctx.callbackQuery) ctx.answerCbQuery().catch(() => {});
+    const tradeId = parseInt(ctx.match[1], 10);
+    const result = ctx.match[2] as 'WIN' | 'LOSS';
+    const telegramId = ctx.from?.id?.toString();
+    const user = await getActiveUser(telegramId, ctx.from?.username);
+    if (!user) return ctx.reply('❌ Akun belum terhubung.');
+
+    const tradeRes = await db.execute({
+      sql: "SELECT * FROM trades WHERE id = ? AND user_id = ?",
+      args: [tradeId, user.id]
+    });
+    if (tradeRes.rows.length === 0) return ctx.reply(`❌ Trade #${tradeId} tidak ditemukan.`);
+    const trade = tradeRes.rows[0] as any;
+
+    closeSessions.set(telegramId, {
+      step: 'pnl',
+      tradeId: Number(trade.id),
+      pair: trade.pair || 'XAUUSD',
+      direction: trade.direction || 'BUY',
+      lot: trade.position_size || 0.01,
+      entry: trade.entry_price || 0,
+      sl: trade.sl || 0,
+      tp: trade.tp || 0,
+      result: result,
+      timestamp: Date.now()
+    });
+
+    const isWin = result === 'WIN';
+    const promptText = `💵 <b>TUTUP TRADE #${tradeId} (${isWin ? '🏆 WIN' : '❌ LOSS'})</b>\n` +
+                       `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+                       `Ketik nominal Realized P/L dalam USD ($) di chat (cth: <code>${isWin ? '125' : '-45'}</code>):\n` +
+                       `<i>Atau ketik <code>/closed ${tradeId} ${isWin ? '+125' : '-45'}</code></i>`;
+
+    await ctx.reply(promptText, { parse_mode: 'HTML' });
   });
 
   // COMMAND: /saldo /balance /stats
@@ -3597,14 +4354,14 @@ export function initTelegramBot(db: any) {
     msg += `Pilih menu aksi cepat:`;
 
     const keyboard = Markup.inlineKeyboard([
-      [Markup.button.callback('📝 Jurnal Baru', 'cmd_start_journal'), Markup.button.callback('🚀 Jurnal Bulk', 'cmd_bulk_prompt')],
+      [Markup.button.callback('📝 Jurnal Baru', 'cmd_start_journal'), Markup.button.callback('⚡ Tutup Trade (/closed)', 'cmd_closed')],
+      [Markup.button.callback('⏳ Trade Running', 'cmd_running'), Markup.button.callback('🚀 Jurnal Bulk', 'cmd_bulk_prompt')],
       [Markup.button.callback('📊 Analytics (Harian/Weekly)', 'cmd_analytic'), Markup.button.callback('🛡️ Atur DD (Drawdown)', 'cmd_open_setdd')],
       [Markup.button.callback('📊 Hari Ini (Today)', 'cmd_today'), Markup.button.callback('📈 7 Hari (Weekly)', 'cmd_weekly')],
       [Markup.button.callback('💰 Cek Saldo & Equity', 'cmd_saldo'), Markup.button.callback('🎯 Atur Target Goal', 'cmd_setgoal')],
-      [Markup.button.callback('🧮 Kalkulator Lot', 'cmd_lot'), Markup.button.callback('⏳ Trade Running', 'cmd_running')],
-      [Markup.button.callback('📰 Berita Pasar (News)', 'cmd_news'), Markup.button.callback('🛡️ Set Risiko %', 'cmd_setrisk_menu')],
-      [Markup.button.callback('💵 Set Modal Awal', 'cmd_setmodal'), Markup.button.callback('🏷️ Ganti Tipe Akun', 'cmd_setaccount')],
-      [Markup.button.callback('👥 Kelola Akun', 'cmd_accounts'), Markup.button.callback('⚠️ Reset Data Akun', 'cmd_reset')],
+      [Markup.button.callback('🧮 Kalkulator Lot', 'cmd_lot'), Markup.button.callback('🛡️ Set Risiko %', 'cmd_setrisk_menu')],
+      [Markup.button.callback('📰 Berita Pasar (News)', 'cmd_news'), Markup.button.callback('🏷️ Ganti Tipe Akun', 'cmd_setaccount')],
+      [Markup.button.callback('💵 Set Modal Awal', 'cmd_setmodal'), Markup.button.callback('👥 Kelola Akun', 'cmd_accounts')],
       [Markup.button.url('🌐 Buka Web Dashboard', 'https://jalu-trading-jurnal.vercel.app/'), Markup.button.callback('💡 Bantuan', 'cmd_help')]
     ]);
 
@@ -3627,6 +4384,9 @@ export function initTelegramBot(db: any) {
     const helpMsg = `📖 <b>PANDUAN LENGKAP & DAFTAR COMMAND BOT</b>\n` +
                     `━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
                     `🚀 <b>1. PENCATATAN TRADE & JURNAL CEPAT</b>\n` +
+                    `• <code>/jurnal</code> — Wizard interaktif input trade langkah demi langkah (lengkap dengan Entry, SL, TP, & opsi Running)\n` +
+                    `• <code>/closed</code> — Tutup trade running interaktif 1/1 (Status, P/L, Chart After) atau cepat (cth: <code>/closed +120</code> atau <code>/closed -45</code>)\n` +
+                    `• <code>/running</code> — Lihat daftar trade aktif / pending order\n` +
                     `• <code>/bulk</code> — Catat banyak trade sekaligus dalam 1 pesan\n` +
                     `  <i>Contoh:</i>\n` +
                     `  <code>/bulk\n` +
@@ -3639,9 +4399,6 @@ export function initTelegramBot(db: any) {
                     `  <i>Contoh:</i> <code>/buy XAUUSD 0.05 +80</code>\n` +
                     `• <code>/sell [pair] [lot] [pnl]</code> — Shortcut instan posisi SELL\n` +
                     `  <i>Contoh:</i> <code>/sell EURUSD 0.10 -40</code>\n` +
-                    `• <code>/jurnal</code> — Wizard interaktif input trade langkah demi langkah\n` +
-                    `• <code>/running</code> — Lihat daftar trade aktif / pending order\n` +
-                    `• <code>/close [id] [win/loss] [pnl]</code> — Tutup trade running\n` +
                     `• <code>/undo</code> — Batalkan / hapus trade terakhir jika salah input\n\n` +
                     `🎯 <b>2. ANALYTICS & MONITORING PERFORMA</b>\n` +
                     `• <code>/analytic</code> — Ringkasan performa <b>Harian vs Weekly</b> (tersinkron ke dropdown Web)\n` +
@@ -3737,21 +4494,50 @@ export function initTelegramBot(db: any) {
             const entryVal = parseFloat(text);
             if (!isNaN(entryVal)) session.entry = entryVal;
           }
-          session.step = 'result';
-          session.timestamp = Date.now();
-
-          const resKeyboard = [
-            [Markup.button.callback('🏆 WIN (Profit)', 'jr_WIN'), Markup.button.callback('❌ LOSS (Rugi)', 'jr_LOSS')],
-            [Markup.button.callback('⚖️ BE (Break Even)', 'jr_BE'), Markup.button.callback('⏳ Masih Berjalan (Running)', 'jr_PENDING')],
-            [Markup.button.callback('❌ Batalkan', 'cmd_cancel_journal')]
-          ];
-          return ctx.reply(`Entry tercatat: <b>${session.entry || 'Dilewati'}</b>\nPilih status hasil trade:`, {
-            parse_mode: 'HTML',
-            reply_markup: { inline_keyboard: resKeyboard }
-          });
+          return promptSlStep(ctx, session);
         }
 
-        // Custom PnL typed in chat
+        // Custom Stop Loss (SL) typed in chat
+        if (session.step === 'sl') {
+          if (text !== '-') {
+            const slVal = parseFloat(text);
+            if (!isNaN(slVal)) session.sl = slVal;
+          }
+          return promptTpStep(ctx, session);
+        }
+
+        // Custom Take Profit (TP) typed in chat
+        if (session.step === 'tp') {
+          if (text !== '-') {
+            const tpVal = parseFloat(text);
+            if (!isNaN(tpVal)) session.tp = tpVal;
+          }
+          return promptOpenTimeStep(ctx, session);
+        }
+
+        // Custom Jam Buka (Open Time) typed in chat (e.g. 09:15)
+        if (session.step === 'open_time') {
+          const sess = getWibTimeAndSession(text);
+          session.trade_time = sess.timeStr;
+          session.session = sess.sessionName;
+          return promptOpenNotesStep(ctx, session);
+        }
+
+        // Custom Alasan Entry typed in chat
+        if (session.step === 'notes') {
+          session.notes = text;
+          return promptPositionStatusStep(ctx, session);
+        }
+
+        // Chart before link typed when saving running trade
+        if (session.step === 'image_before_running') {
+          if (text.startsWith('http://') || text.startsWith('https://') || text.includes('tradingview.com')) {
+            session.image_before = normalizeTradingViewUrl(text);
+          }
+          return saveRunningTrade(ctx, telegramId, session);
+        }
+
+        // Custom PnL typed in chat (when already closed)
         if (session.step === 'pnl') {
           let pnlVal = parseFloat(text.replace('$', '').trim());
           if (isNaN(pnlVal)) {
@@ -3761,14 +4547,19 @@ export function initTelegramBot(db: any) {
           if (session.result === 'WIN' && pnlVal < 0) pnlVal = Math.abs(pnlVal);
 
           session.pnl = pnlVal;
-          return promptTimeStep(ctx, session);
+          return promptCloseTimeStep(ctx, session);
         }
 
-        // Custom Execution Time typed in chat (e.g. 14:30)
-        if (session.step === 'time') {
+        // Custom Jam Tutup (Close Time) typed in chat (e.g. 17:30)
+        if (session.step === 'close_time') {
           const sess = getWibTimeAndSession(text);
-          session.trade_time = sess.timeStr;
-          session.session = sess.sessionName;
+          session.close_time = sess.timeStr;
+          return promptCloseNotesStep(ctx, session);
+        }
+
+        // Custom Alasan Close typed in chat
+        if (session.step === 'close_notes') {
+          session.close_notes = text;
           return promptBeforeImageStep(ctx, session);
         }
 
@@ -3785,13 +4576,52 @@ export function initTelegramBot(db: any) {
           if (text.startsWith('http://') || text.startsWith('https://') || text.includes('tradingview.com')) {
             session.image_after = normalizeTradingViewUrl(text);
           }
-          return promptNotesStep(ctx, session);
+          return completeInteractiveJournal(ctx, telegramId, session);
+        }
+      }
+
+      // 1b. Check if user is in interactive trade close session (/closed)
+      if (telegramId && closeSessions.has(telegramId)) {
+        const cs = closeSessions.get(telegramId)!;
+
+        // Custom P/L typed in chat
+        if (cs.step === 'pnl') {
+          let pnlVal = parseFloat(text.replace('$', '').replace('+', '').trim());
+          if (isNaN(pnlVal)) {
+            return ctx.reply('Ketik nominal P/L angka yang valid (cth: <code>125</code> atau <code>-45</code>):', { parse_mode: 'HTML' });
+          }
+          if (cs.result === 'LOSS' && pnlVal > 0) pnlVal = -pnlVal;
+          if (cs.result === 'WIN' && pnlVal < 0) pnlVal = Math.abs(pnlVal);
+          if (cs.result === 'BE') pnlVal = 0;
+
+          cs.pnl = pnlVal;
+          return promptCloseTimeForClose(ctx, cs);
         }
 
-        // Custom Reason / Notes typed in chat
-        if (session.step === 'notes') {
-          session.notes = text;
-          return completeInteractiveJournal(ctx, telegramId, session);
+        // Custom Jam Tutup (Close Time) typed in chat (e.g. 17:30)
+        if (cs.step === 'close_time') {
+          const sess = getWibTimeAndSession(text);
+          cs.close_time = sess.timeStr;
+          return promptCloseNotesForClose(ctx, cs);
+        }
+
+        // Custom Alasan Close typed in chat
+        if (cs.step === 'close_notes') {
+          cs.close_notes = text;
+          return promptCloseAfterImage(ctx, cs);
+        }
+
+        // Custom Chart After link or notes typed in chat
+        if (cs.step === 'image_after') {
+          if (text.startsWith('http://') || text.startsWith('https://') || text.includes('tradingview.com')) {
+            cs.image_after = normalizeTradingViewUrl(text);
+          } else {
+            if (!cs.close_notes) cs.close_notes = text;
+          }
+          const user = await getActiveUser(telegramId, ctx.from?.username);
+          const tradeRes = await db.execute({ sql: "SELECT * FROM trades WHERE id = ?", args: [cs.tradeId] });
+          const originalTrade = tradeRes.rows[0] || cs;
+          return executeTradeClose(ctx, user, originalTrade, cs.result || 'WIN', cs.pnl || 0, cs.image_after, cs.close_notes, cs.close_time);
         }
       }
 
@@ -3913,9 +4743,14 @@ export function initTelegramBot(db: any) {
       const fileLink = await ctx.telegram.getFileLink(fileId);
       const base64Img = await getTelegramImageBase64(fileLink.href);
 
-      // Check if user is in interactive journal session waiting for image_before or image_after
+      // Check if user is in interactive journal session waiting for photo
       if (telegramId && journalSessions.has(telegramId)) {
         const session = journalSessions.get(telegramId)!;
+        if (session.step === 'image_before_running') {
+          session.image_before = base64Img;
+          await saveRunningTrade(ctx, telegramId, session);
+          return;
+        }
         if (session.step === 'image_before') {
           session.image_before = base64Img;
           await promptAfterImageStep(ctx, session);
@@ -3923,7 +4758,19 @@ export function initTelegramBot(db: any) {
         }
         if (session.step === 'image_after') {
           session.image_after = base64Img;
-          await promptNotesStep(ctx, session);
+          await completeInteractiveJournal(ctx, telegramId, session);
+          return;
+        }
+      }
+
+      // Check if user is in interactive trade close session (/closed)
+      if (telegramId && closeSessions.has(telegramId)) {
+        const cs = closeSessions.get(telegramId)!;
+        if (cs.step === 'image_after') {
+          cs.image_after = base64Img;
+          const tradeRes = await db.execute({ sql: "SELECT * FROM trades WHERE id = ?", args: [cs.tradeId] });
+          const originalTrade = tradeRes.rows[0] || cs;
+          await executeTradeClose(ctx, user, originalTrade, cs.result || 'WIN', cs.pnl || 0, cs.image_after, cs.close_notes, cs.close_time);
           return;
         }
       }

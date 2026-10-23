@@ -11,6 +11,7 @@ export default function EditTradeModal({ trade, onClose, onUpdated }: { trade: T
   const [notes, setNotes] = useState(trade.notes || '');
   const [image, setImage] = useState<string | null>(trade.image || trade.image_url || null);
   const [tradeTime, setTradeTime] = useState<string>(trade.trade_time || '12:00');
+  const [closeTime, setCloseTime] = useState<string>(trade.close_time || '');
   const detectedSession = useMemo(() => detectTradingSession(tradeTime), [tradeTime]);
   const [customSession, setCustomSession] = useState<string>(trade.session || '');
   const activeSession = customSession || detectedSession.name;
@@ -36,6 +37,7 @@ export default function EditTradeModal({ trade, onClose, onUpdated }: { trade: T
           notes,
           image,
           trade_time: tradeTime,
+          close_time: result !== 'Pending' ? (closeTime || tradeTime) : null,
           session: activeSession
         })
       });
@@ -108,6 +110,21 @@ export default function EditTradeModal({ trade, onClose, onUpdated }: { trade: T
                 </span>
               </div>
             </div>
+            {result !== 'Pending' && (
+              <div className="pt-2 border-t border-slate-200 dark:border-neutral-800 flex items-center justify-between gap-2">
+                <Label className="flex items-center gap-1.5 text-slate-600 dark:text-neutral-400 whitespace-nowrap">
+                  <Clock size={12} />
+                  <span>Jam Tutup (Close Time)</span>
+                </Label>
+                <input
+                  type="time"
+                  value={closeTime}
+                  onChange={e => setCloseTime(e.target.value)}
+                  placeholder="HH:mm"
+                  className="border border-slate-300 dark:border-neutral-700 p-1.5 text-xs font-mono font-bold text-slate-900 dark:text-white focus:outline-none focus:border-cyan-600 rounded-sm bg-white dark:bg-neutral-900 max-w-[140px]"
+                />
+              </div>
+            )}
           </div>
 
           <div className="flex flex-col gap-2">

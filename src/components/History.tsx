@@ -451,10 +451,15 @@ export default function History({
                               
                               {/* Time & Session */}
                               <td className="px-4 py-3 whitespace-nowrap">
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-1.5">
                                   <span className="font-bold text-white">
                                     {trade.trade_time || format(parseDateStr(trade.created_at), 'HH:mm')}
                                   </span>
+                                  {trade.close_time && (
+                                    <span className="text-[10px] text-[#A3A3A3] font-normal" title={`Jam Tutup: ${trade.close_time} WIB`}>
+                                      → {trade.close_time}
+                                    </span>
+                                  )}
                                   <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#101010] text-[#A3A3A3] border border-[#262626]">
                                     {sessName}
                                   </span>

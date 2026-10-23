@@ -23,6 +23,7 @@ export type Trade = {
   run_mode: 'backtest' | 'demo';
   session?: string | null;
   trade_time?: string | null;
+  close_time?: string | null;
   created_at: string;
 };
 
