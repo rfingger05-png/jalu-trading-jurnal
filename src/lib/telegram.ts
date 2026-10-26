@@ -544,7 +544,7 @@ if (typeof cleanupInterval.unref === 'function') {
 }
 
 export function initTelegramBot(db: any) {
-  const token = process.env.TELEGRAM_BOT_TOKEN || '8443526888:AAF8B7uWR5NomsFWGZCac3fE7uuP865A2m4';
+  const token = process.env.TELEGRAM_BOT_TOKEN || '8443526888:AAGo2G6wdKwfGtD7Iw-CZnHRFrqsiC6S734';
 
   if (!token) {
     botStatus.configured = false;
